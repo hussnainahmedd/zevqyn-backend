@@ -85,9 +85,48 @@ ZEVQYN uses Supabase for:
 * **PostgreSQL database** — stores profiles, workspaces, documents, projects, resumes, portfolios, conversations, and more.
 * **pgvector** — powers RAG similarity search via the `match_document_chunks` RPC function.
 * **Storage** — holds uploaded research documents in the private `research-documents` bucket.
-* **Auth** — user authentication (later phases).
+* **Auth** — user authentication via Supabase Auth + Bearer token validation.
 
 The backend connects to Supabase using the **service-role (secret) key** for privileged server-side operations. This client is created lazily — it is only initialized when a Supabase-dependent operation is called, so the basic health-check server starts without credentials.
+
+## Authentication
+
+Clients authenticate with Supabase Auth and receive an access token. Protected FastAPI endpoints require:
+
+```
+Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
+```
+
+The backend validates the token server-side via `supabase.auth.get_user()` — it does **not** trust local JWT decoding alone.
+
+### `GET /api/v1/me`
+
+Returns the authenticated user's identity:
+
+```json
+{
+  "id": "<user-uuid>",
+  "email": "<email-or-null>"
+}
+```
+
+Unauthenticated requests receive **401 Unauthorized**.
+
+### Security rules
+
+* **Client-supplied user IDs are never trusted.** User identity always comes from the verified Supabase token.
+* Access tokens are never stored in user models or returned in API responses.
+* The service-role key is never exposed to clients.
+
+## CORS
+
+Allowed origins are configured via the `CORS_ORIGINS` environment variable (comma-separated):
+
+```
+CORS_ORIGINS=https://zevqyn.com,http://localhost:3000
+```
+
+Default (development): `http://localhost:3000,http://localhost:8000`
 
 ## Running Tests
 
@@ -109,6 +148,18 @@ This runs read-only connectivity checks against your Supabase project:
 
 No data is modified.
 
+### Manual auth verification
+
+To test authentication against real Supabase Auth:
+
+1. Obtain a valid Supabase access token (e.g. via Supabase dashboard or client login).
+2. Run the dev server: `uvicorn app.main:app --reload`
+3. Call the protected endpoint:
+   ```bash
+   curl -H "Authorization: Bearer <YOUR_TOKEN>" http://localhost:8000/api/v1/me
+   ```
+4. **Never** commit, log, or share the token.
+
 ## Security
 
 > **⚠️ Never commit your `.env` file or expose API keys in source code.**
@@ -116,4 +167,3 @@ No data is modified.
 > The `.env` file is listed in `.gitignore` and must remain excluded from version control. Use `.env.example` as a template — it contains variable names only, with no real values.
 >
 > The `SUPABASE_SECRET_KEY` bypasses Row Level Security — it must only be used in trusted backend code and must never appear in API responses, logs, or frontend code.
-

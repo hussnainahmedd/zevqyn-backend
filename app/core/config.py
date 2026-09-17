@@ -28,6 +28,16 @@ class Settings:
     SUPABASE_SECRET_KEY: str = os.getenv("SUPABASE_SECRET_KEY", "")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
+    # CORS — comma-separated origins, e.g. "https://zevqyn.com,http://localhost:3000"
+    CORS_ORIGINS: list[str] = [
+        o.strip()
+        for o in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:3000,http://localhost:8000",
+        ).split(",")
+        if o.strip()
+    ]
+
     @property
     def supabase_configured(self) -> bool:
         """Return True if the minimum Supabase variables are set."""
