@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from uuid import UUID
-from fastapi import APIRouter, Depends, UploadFile, File, status, Response
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status, Response
 
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.core.supabase import get_admin_client

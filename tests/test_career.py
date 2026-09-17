@@ -82,7 +82,7 @@ def test_profile_truncation_limits(mock_certs, mock_edu, mock_skills, mock_projs
     from app.services.career import get_career_profile
     import uuid
     from app.models.project import ProjectResponse
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     # Create 35 projects to test max 30 limit, and one with a massive description
     long_desc = "A" * 2000
@@ -98,8 +98,8 @@ def test_profile_truncation_limits(mock_certs, mock_edu, mock_skills, mock_projs
             skills=[],
             visibility="private",
             featured=False,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
         ))
         
     mock_projs.return_value = projects

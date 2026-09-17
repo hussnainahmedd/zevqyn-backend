@@ -15,6 +15,14 @@ from app.services.documents import get_document, BUCKET_NAME
 from app.utils.text import normalize_text
 
 
+MAX_PAGES = 1000
+MAX_CHARS = 5_000_000
+
+def _check_char_bound(total: int, new_length: int) -> int:
+    if total + new_length > MAX_CHARS:
+        raise ValueError(f"Extracted text exceeds safe limit of {MAX_CHARS} characters")
+    return total + new_length
+
 def _extract_pdf(content: bytes) -> list[ExtractedUnit]:
     """Extract text from PDF page by page."""
     units = []
@@ -26,10 +34,15 @@ def _extract_pdf(content: bytes) -> list[ExtractedUnit]:
     if doc.is_encrypted:
         raise ValueError("Cannot extract text from encrypted/password-protected PDF")
 
+    if doc.page_count > MAX_PAGES:
+        raise ValueError(f"Document exceeds maximum page limit of {MAX_PAGES}")
+
+    total_chars = 0
     for i, page in enumerate(doc):
         text = page.get_text()
         norm_text = normalize_text(text)
         if norm_text:
+            total_chars = _check_char_bound(total_chars, len(norm_text))
             units.append(
                 ExtractedUnit(
                     index=len(units),
@@ -55,10 +68,12 @@ def _extract_docx(content: bytes) -> list[ExtractedUnit]:
     except Exception as e:
         raise ValueError("Failed to parse DOCX document")
 
+    total_chars = 0
     # Extract paragraphs
     for p in doc.paragraphs:
         norm_text = normalize_text(p.text)
         if norm_text:
+            total_chars = _check_char_bound(total_chars, len(norm_text))
             units.append(
                 ExtractedUnit(
                     index=len(units),
@@ -76,10 +91,12 @@ def _extract_docx(content: bytes) -> list[ExtractedUnit]:
                 if ct:
                     row_text.append(ct)
             if row_text:
+                combined = " | ".join(row_text)
+                total_chars = _check_char_bound(total_chars, len(combined))
                 units.append(
                     ExtractedUnit(
                         index=len(units),
-                        text=" | ".join(row_text),
+                        text=combined,
                         source_label="Table Row",
                     )
                 )
@@ -103,6 +120,8 @@ def _extract_txt(content: bytes) -> list[ExtractedUnit]:
     norm_text = normalize_text(text)
     if not norm_text:
         raise ValueError("Empty text document")
+        
+    _check_char_bound(0, len(norm_text))
 
     return [ExtractedUnit(index=0, text=norm_text, source_label="Document")]
 
@@ -164,7 +183,7 @@ def process_document(
             "id", str(document_id)
         ).execute()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)
         )
     except Exception as e:
         client.table("documents").update({"status": "failed"}).eq(
