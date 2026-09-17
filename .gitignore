@@ -1,0 +1,25 @@
+# Environment variables / secrets
+.env
+
+# Virtual environments
+venv/
+.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
