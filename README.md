@@ -141,6 +141,20 @@ Documents are uploaded via multipart/form-data.
 * `DELETE /api/v1/workspaces/{ws_id}/documents/{doc_id}` — Delete a document and its storage file
 * `GET /api/v1/workspaces/{ws_id}/documents/{doc_id}/download` — Get a short-lived (60s) signed URL to download the private file
 
+### Document Extraction
+
+After a document is uploaded, you can trigger text extraction via:
+* `POST /api/v1/workspaces/{ws_id}/documents/{doc_id}/extract`
+
+This endpoint securely retrieves the document from the private Storage bucket, parses the content based on file type, normalizes the text, and returns a structured representation of the text chunks (e.g. by page or paragraph). The document status is updated to `processing`, and then to `processed` (or `failed` if extraction errors occur).
+
+**Supported formats for extraction:**
+* **PDF**: Extracted page by page using `PyMuPDF`. Empty pages are skipped. Does **not** perform OCR (scanned/image-only PDFs will fail to extract text). Password-protected PDFs are rejected.
+* **DOCX**: Logical paragraphs and basic tables are extracted using `python-docx`. Does not provide page numbers.
+* **TXT / MD**: Extracted safely with UTF-8 support (handles BOM). Markdown is treated as plain text with structural headings retained.
+
+*Note: Phase 4B implements text extraction only. Chunking for vector search (embeddings) will be added in Phase 5.*
+
 ### File Upload Constraints
 
 * **Allowed types:** PDF, DOCX, TXT, Markdown (.md)

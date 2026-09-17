@@ -10,6 +10,8 @@ from app.models.workspace import WorkspaceCreate, WorkspaceUpdate, WorkspaceResp
 from app.models.document import DocumentResponse, DocumentDownloadResponse
 from app.services import workspaces as workspace_service
 from app.services import documents as document_service
+from app.services import extraction as extraction_service
+from app.models.extraction import ExtractedDocument
 
 router = APIRouter(prefix="/api/v1/workspaces", tags=["workspaces"])
 
@@ -114,3 +116,14 @@ async def download_document(
 ):
     """Get a short-lived signed URL to download a document."""
     return document_service.generate_download_url(user.id, workspace_id, document_id)
+
+
+@router.post("/{workspace_id}/documents/{document_id}/extract", response_model=ExtractedDocument)
+async def extract_document(
+    workspace_id: UUID,
+    document_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Extract text from a private document."""
+    return extraction_service.process_document(user.id, workspace_id, document_id)
+
