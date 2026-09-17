@@ -30,7 +30,7 @@ class RetrievedChunk(BaseModel):
     chunk_id: UUID
     document_id: UUID
     content: str
-    similarity: float
+    similarity: Optional[float] = None
     page_number: Optional[int] = None
     source_label: Optional[str] = None
     metadata: dict = {}

@@ -23,7 +23,7 @@ class Citation(BaseModel):
     page_number: Optional[int] = None
     source_label: Optional[str] = None
     chunk_id: UUID
-    similarity: float
+    similarity: Optional[float] = None
 
 
 class ChatResponse(BaseModel):

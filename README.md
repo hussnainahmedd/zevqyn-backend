@@ -212,6 +212,48 @@ The core research chat pipeline is available via:
 }
 ```
 
+### Research AI Features (Phase 7)
+
+ZEVQYN offers AI-powered generation for study and analysis based directly on the uploaded documents. These features can be scoped to a single document or across an entire workspace, ensuring broader coverage by intelligently retrieving chunks across available files.
+
+Endpoints under `/api/v1/workspaces/{workspace_id}/research/`:
+* `POST /summary` — Generate a comprehensive research summary.
+* `POST /key-points` — Extract the most important insights (returns structured JSON array).
+* `POST /questions` — Generate grounded study/research questions.
+* `POST /flashcards` — Generate flashcards (front/back) for quick revision.
+
+**Example Request:**
+```json
+{
+  "document_id": "optional-uuid",
+  "count": 5
+}
+```
+
+**Example Flashcard Response:**
+```json
+{
+  "flashcards": [
+    {
+      "front": "What is ...?",
+      "back": "...",
+      "citations": [
+        {
+          "source_id": "SOURCE_1",
+          "document_id": "uuid",
+          "document_name": "paper.pdf",
+          "page_number": 3,
+          "source_label": "Page 3",
+          "similarity": 1.0
+        }
+      ]
+    }
+  ],
+  "scope": "workspace"
+}
+```
+*Note on Persistence*: Questions and Flashcards are returned to the client and currently unpersisted on the backend, ensuring schema consistency as current tables do not natively support complex JSONB citation arrays without manual SQL migrations.
+
 ### File Upload Constraints
 
 * **Allowed types:** PDF, DOCX, TXT, Markdown (.md)
