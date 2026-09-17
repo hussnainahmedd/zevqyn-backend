@@ -71,15 +71,49 @@ FastAPI auto-generates interactive docs:
 | `SUPABASE_SECRET_KEY` | Supabase service-role secret key |
 | `GEMINI_API_KEY` | Google Gemini API key |
 
+### Publishable key vs Secret key
+
+| Key | Purpose | Audience |
+|-----|---------|----------|
+| `SUPABASE_PUBLISHABLE_KEY` | Client-side / user-scoped operations (respects RLS) | Frontend & future auth flows |
+| `SUPABASE_SECRET_KEY` | Server-side admin operations (bypasses RLS) | Backend only — **never** expose |
+
+## Supabase Integration
+
+ZEVQYN uses Supabase for:
+
+* **PostgreSQL database** — stores profiles, workspaces, documents, projects, resumes, portfolios, conversations, and more.
+* **pgvector** — powers RAG similarity search via the `match_document_chunks` RPC function.
+* **Storage** — holds uploaded research documents in the private `research-documents` bucket.
+* **Auth** — user authentication (later phases).
+
+The backend connects to Supabase using the **service-role (secret) key** for privileged server-side operations. This client is created lazily — it is only initialized when a Supabase-dependent operation is called, so the basic health-check server starts without credentials.
+
 ## Running Tests
 
+### Unit tests (offline, no credentials needed)
+
 ```bash
-pip install pytest httpx
 pytest
 ```
+
+### Integration tests (requires .env with real Supabase credentials)
+
+```bash
+pytest -m integration -v
+```
+
+This runs read-only connectivity checks against your Supabase project:
+- Verifies database access via a harmless query on `profiles`
+- Verifies access to the `research-documents` Storage bucket
+
+No data is modified.
 
 ## Security
 
 > **⚠️ Never commit your `.env` file or expose API keys in source code.**
 >
 > The `.env` file is listed in `.gitignore` and must remain excluded from version control. Use `.env.example` as a template — it contains variable names only, with no real values.
+>
+> The `SUPABASE_SECRET_KEY` bypasses Row Level Security — it must only be used in trusted backend code and must never appear in API responses, logs, or frontend code.
+
