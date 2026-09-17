@@ -129,13 +129,21 @@ def get_representative_chunks(
                 # Fits within budget
                 selected_chunk_ids.extend([c["id"] for c in doc_chunks])
             else:
-                # Sample evenly across the document
-                step = n_chunks / limit_per_doc
-                for i in range(limit_per_doc):
-                    idx = int(i * step)
-                    # Safety check
-                    idx = min(idx, n_chunks - 1)
-                    selected_chunk_ids.append(doc_chunks[idx]["id"])
+                # Sample evenly across the document: must include first and last
+                if limit_per_doc == 1:
+                    selected_chunk_ids.append(doc_chunks[0]["id"])
+                else:
+                    step = (n_chunks - 1) / (limit_per_doc - 1)
+                    indices = set()
+                    for i in range(limit_per_doc):
+                        idx = int(round(i * step))
+                        idx = min(max(idx, 0), n_chunks - 1)
+                        if idx not in indices:
+                            indices.add(idx)
+                            selected_chunk_ids.append(doc_chunks[idx]["id"])
+                    
+                    # If due to rounding/budget we have fewer unique than expected,
+                    # we can pad, but a set guarantees no duplicates. Order is maintained by the append.
                     
         if not selected_chunk_ids:
             return []

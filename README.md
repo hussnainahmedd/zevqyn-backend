@@ -254,6 +254,25 @@ Endpoints under `/api/v1/workspaces/{workspace_id}/research/`:
 ```
 *Note on Persistence*: Questions and Flashcards are returned to the client and currently unpersisted on the backend, ensuring schema consistency as current tables do not natively support complex JSONB citation arrays without manual SQL migrations.
 
+### Project AI Features (Phase 8A)
+
+ZEVQYN allows you to seamlessly transition from unstructured research into a structured project proposal.
+
+* `POST /api/v1/workspaces/{workspace_id}/research/create-project`
+  * Generates a **preview** of a project proposal from your document or workspace research.
+  * Preview includes grounded problem statements, AI-suggested features, technologies, and skills.
+  * Preview must be explicitly saved via standard Project CRUD to persist.
+
+Standard Project CRUD (`/api/v1/projects`) enforces strictly authenticated ownership and supports defining `technologies`, `skills`, `visibility`, and `source_document_id`.
+
+### Career AI Assistant (Phase 8B)
+
+ZEVQYN includes a secure, grounded Career AI Assistant (`POST /api/v1/career/assistant`).
+
+* **Profile Grounding**: The AI has strict access only to your authenticated Career Profile (Projects, Skills, Education, Certificates). It will **never** hallucinate or invent qualifications, jobs, or degrees you have not explicitly saved.
+* **General Guidance**: The AI can provide generic advice (e.g. "To become a backend engineer, you need...") but clearly separates this from your actual profile facts.
+* **Security First**: Your profile is stored securely via Standard Career CRUD endpoints (`/api/v1/career/skills`, etc.). No client-provided user IDs are accepted; everything is inferred natively from your signed Supabase JWT.
+
 ### File Upload Constraints
 
 * **Allowed types:** PDF, DOCX, TXT, Markdown (.md)

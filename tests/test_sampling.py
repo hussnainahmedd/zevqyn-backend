@@ -159,18 +159,32 @@ def test_sampling_algorithms(mock_db):
         return -1
         
     indices = [get_idx(r.chunk_id, doc_1_id) for r in results]
-    assert indices == [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]
+    assert indices == [0, 11, 22, 33, 44, 55, 66, 77, 88, 99]
     
     # 3. Test Workspace Budget Distribution (3 docs: 10, 100, 5 chunks. Limit: 12)
     # Docs count = 3. limit_per_doc = 12 // 3 = 4
-    # Doc 0 (10 chunks) -> samples 4 -> 0, 2, 5, 7
-    # Doc 1 (100 chunks) -> samples 4 -> 0, 25, 50, 75
-    # Doc 2 (5 chunks) -> samples 4 -> wait, 5 > 4, so it samples 0, 1, 2, 3
+    # Doc 0 (10 chunks) -> step 9/3=3 -> 0, 3, 6, 9
+    # Doc 1 (100 chunks) -> step 99/3=33 -> 0, 33, 66, 99
+    # Doc 2 (5 chunks) -> step 4/3=1.33 -> 0, 1, 3, 4
     results = get_representative_chunks(uuid.UUID(FAKE_USER), uuid.UUID(FAKE_WS), None, limit=12)
     
     assert len(results) == 12
     # Verify the first 4 are from doc_0, next 4 from doc_1, last 4 from doc_2
     docs = [str(r.document_id) for r in results]
-    assert docs[0:4] == [make_uuid("doc_0")] * 4
-    assert docs[4:8] == [make_uuid("doc_1")] * 4
-    assert docs[8:12] == [make_uuid("doc_2")] * 4
+    doc_0_id = make_uuid("doc_0")
+    doc_1_id = make_uuid("doc_1")
+    doc_2_id = make_uuid("doc_2")
+    
+    assert docs[0:4] == [doc_0_id] * 4
+    assert docs[4:8] == [doc_1_id] * 4
+    assert docs[8:12] == [doc_2_id] * 4
+    
+    # Verify indices
+    idx_0 = [get_idx(r.chunk_id, doc_0_id) for r in results[0:4]]
+    assert idx_0 == [0, 3, 6, 9]
+    
+    idx_1 = [get_idx(r.chunk_id, doc_1_id) for r in results[4:8]]
+    assert idx_1 == [0, 33, 66, 99]
+    
+    idx_2 = [get_idx(r.chunk_id, doc_2_id) for r in results[8:12]]
+    assert idx_2 == [0, 1, 3, 4]

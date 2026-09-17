@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import router as v1_router
 from app.api.workspaces import router as workspaces_router
 from app.api.research import router as research_router
+from app.api.projects import router as projects_router
+from app.api.career import router as career_router
 from app.core.config import settings
 
 app = FastAPI(
@@ -26,6 +28,8 @@ app.add_middleware(
 app.include_router(v1_router)
 app.include_router(workspaces_router)
 app.include_router(research_router)
+app.include_router(projects_router)
+app.include_router(career_router)
 
 
 @app.get("/")
