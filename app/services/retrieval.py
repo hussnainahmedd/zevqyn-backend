@@ -16,7 +16,8 @@ def search_workspace(
     workspace_id: UUID, 
     query: str, 
     match_count: int = 5,
-    match_threshold: float = 0.5
+    match_threshold: float = 0.5,
+    document_id: UUID | None = None
 ) -> list[RetrievedChunk]:
     """Retrieve semantically relevant chunks for a given query in a workspace."""
     if not query.strip():
@@ -40,7 +41,7 @@ def search_workspace(
                 "match_count": match_count,
                 "filter_user_id": str(user_id),
                 "filter_workspace_id": str(workspace_id),
-                "filter_document_id": None
+                "filter_document_id": str(document_id) if document_id else None
             }
         ).execute()
     except Exception as e:
@@ -61,6 +62,7 @@ def search_workspace(
         # If the RPC returns raw chunks we map them:
         results.append(
             RetrievedChunk(
+                chunk_id=UUID(item["id"]),
                 document_id=UUID(item["document_id"]),
                 content=item["content"],
                 similarity=similarity,

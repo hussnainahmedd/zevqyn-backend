@@ -44,6 +44,12 @@ class Settings:
     # Chunking
     CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "1500"))
     CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "200"))
+    
+    # RAG Settings
+    RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "8"))
+    RAG_MATCH_THRESHOLD: float = float(os.getenv("RAG_MATCH_THRESHOLD", "0.70"))
+    RAG_MAX_CONTEXT_CHARS: int = int(os.getenv("RAG_MAX_CONTEXT_CHARS", "20000"))
+    GEMINI_GENERATION_MODEL: str = os.getenv("GEMINI_GENERATION_MODEL", "gemini-2.5-flash")
 
     @property
     def max_upload_bytes(self) -> int:

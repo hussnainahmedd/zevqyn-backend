@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, UploadFile, File, status, Response
 
 from app.core.auth import AuthenticatedUser, get_current_user
+from app.core.supabase import get_admin_client
 from app.models.workspace import WorkspaceCreate, WorkspaceUpdate, WorkspaceResponse
 from app.models.document import DocumentResponse, DocumentDownloadResponse
 from app.services import workspaces as workspace_service
@@ -13,8 +14,10 @@ from app.services import documents as document_service
 from app.services import extraction as extraction_service
 from app.services import indexing as indexing_service
 from app.services import retrieval as retrieval_service
+from app.services import rag as rag_service
 from app.models.extraction import ExtractedDocument
 from app.models.chunking import IndexingResponse, RetrievedChunk
+from app.models.rag import ChatRequest, ChatResponse, ConversationResponse, MessageResponse
 
 router = APIRouter(prefix="/api/v1/workspaces", tags=["workspaces"])
 
@@ -157,5 +160,49 @@ async def search_workspace(
     # Verify workspace ownership first
     workspace_service.get_workspace(user.id, workspace_id)
     return retrieval_service.search_workspace(user.id, workspace_id, request.query, request.match_count)
+
+
+@router.post("/{workspace_id}/chat", response_model=ChatResponse)
+async def chat_workspace(
+    workspace_id: UUID,
+    request: ChatRequest,
+    user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Ask a question and get a grounded answer based on workspace documents."""
+    # Verify workspace ownership first
+    workspace_service.get_workspace(user.id, workspace_id)
+    return rag_service.process_chat_message(
+        user_id=user.id,
+        workspace_id=workspace_id,
+        message=request.message,
+        conversation_id=request.conversation_id,
+        document_id=request.document_id
+    )
+
+@router.get("/{workspace_id}/conversations", response_model=list[ConversationResponse])
+async def list_conversations(
+    workspace_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user)
+):
+    """List all conversations in a workspace."""
+    workspace_service.get_workspace(user.id, workspace_id)
+    client = get_admin_client()
+    res = client.table("conversations").select("*").eq("workspace_id", str(workspace_id)).eq("user_id", str(user.id)).order("updated_at", desc=True).execute()
+    return res.data
+
+
+@router.get("/{workspace_id}/conversations/{conversation_id}/messages", response_model=list[MessageResponse])
+async def list_messages(
+    workspace_id: UUID,
+    conversation_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user)
+):
+    """List all messages in a conversation."""
+    workspace_service.get_workspace(user.id, workspace_id)
+    rag_service.get_conversation(user.id, workspace_id, conversation_id)
+    client = get_admin_client()
+    res = client.table("messages").select("*").eq("conversation_id", str(conversation_id)).eq("user_id", str(user.id)).order("created_at", desc=False).execute()
+    return res.data
+
 
 

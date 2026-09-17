@@ -170,7 +170,47 @@ Test semantic search across a workspace:
 
 Provides a query string and returns semantically relevant chunks based on cosine similarity, using the `match_document_chunks` Supabase RPC. All retrieval is strictly scoped to the authenticated user.
 
-*(Note: Phase 5 provides the retrieval foundation. AI-generated RAG answers will be implemented in Phase 6.)*
+### RAG Chat & Grounded Answers (Phase 6)
+
+The core research chat pipeline is available via:
+* `POST /api/v1/workspaces/{ws_id}/chat`
+* `GET /api/v1/workspaces/{ws_id}/conversations`
+* `GET /api/v1/workspaces/{ws_id}/conversations/{conv_id}/messages`
+
+**RAG Pipeline Behavior:**
+1. **Context Construction**: Retrieves chunks via Phase 5 semantic search. Only retrieves from documents the authenticated user owns within the specified workspace.
+2. **Grounding**: Gemini (`gemini-2.5-flash` by default) is explicitly instructed to answer *only* based on the retrieved context, and to state clearly when information is insufficient.
+3. **Citations**: Returns deterministic citations mapping generated references like `[SOURCE_1]` back to original files, page numbers, and UUIDs. Citations are extracted safely on the backend (not hallucinated by the model) and persisted in the `messages` table via the `sources` JSONB column.
+4. **Insufficient Context**: If retrieval returns nothing useful, the pipeline safely short-circuits to avoid model hallucination.
+
+**Example Request:**
+```json
+{
+  "message": "What does the research say about X?",
+  "conversation_id": "optional-uuid-to-continue-thread"
+}
+```
+
+**Example Response:**
+```json
+{
+  "answer": "According to the study, X is important [SOURCE_1].",
+  "citations": [
+    {
+      "source_id": "SOURCE_1",
+      "document_id": "uuid",
+      "document_name": "paper.pdf",
+      "page_number": 7,
+      "source_label": "Page 7",
+      "chunk_id": "uuid",
+      "similarity": 0.84
+    }
+  ],
+  "retrieved_chunks": 5,
+  "conversation_id": "uuid",
+  "message_id": "uuid"
+}
+```
 
 ### File Upload Constraints
 

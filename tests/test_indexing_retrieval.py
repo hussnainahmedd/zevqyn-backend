@@ -95,6 +95,7 @@ def test_search_endpoint_success(mock_ws_db, mock_db, mock_embed_q):
     mock_rpc_res = MagicMock()
     mock_rpc_res.data = [
         {
+            "id": FAKE_DOC_ID,
             "document_id": FAKE_DOC_ID,
             "content": "Match 1",
             "similarity": 0.95,

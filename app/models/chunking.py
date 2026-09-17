@@ -27,6 +27,7 @@ class IndexingResponse(BaseModel):
 
 class RetrievedChunk(BaseModel):
     """A matched chunk returned by the retrieval service."""
+    chunk_id: UUID
     document_id: UUID
     content: str
     similarity: float
