@@ -153,7 +153,24 @@ This endpoint securely retrieves the document from the private Storage bucket, p
 * **DOCX**: Logical paragraphs and basic tables are extracted using `python-docx`. Does not provide page numbers.
 * **TXT / MD**: Extracted safely with UTF-8 support (handles BOM). Markdown is treated as plain text with structural headings retained.
 
-*Note: Phase 4B implements text extraction only. Chunking for vector search (embeddings) will be added in Phase 5.*
+### Document Indexing (Phase 5)
+
+The indexing pipeline combines extraction, chunking, and semantic embeddings into a single process:
+* `POST /api/v1/workspaces/{ws_id}/documents/{doc_id}/index`
+
+1. **Extraction**: Retreives and parses the document (same as the extract endpoint).
+2. **Chunking**: Text is split into overlapping chunks (configured via `CHUNK_SIZE` and `CHUNK_OVERLAP`). Critically, chunks never cross page boundaries to ensure accurate citations.
+3. **Embeddings**: Uses `gemini-embedding-001` (retrieval-document task type) via the Google GenAI SDK to generate 768-dimensional embeddings.
+4. **Persistence**: Embedded chunks are stored in the Supabase `document_chunks` table via `pgvector`. This step is idempotent (re-indexing safely replaces old chunks).
+
+### Search & Retrieval (Phase 5)
+
+Test semantic search across a workspace:
+* `POST /api/v1/workspaces/{ws_id}/search`
+
+Provides a query string and returns semantically relevant chunks based on cosine similarity, using the `match_document_chunks` Supabase RPC. All retrieval is strictly scoped to the authenticated user.
+
+*(Note: Phase 5 provides the retrieval foundation. AI-generated RAG answers will be implemented in Phase 6.)*
 
 ### File Upload Constraints
 

@@ -40,6 +40,10 @@ class Settings:
 
     # Upload limits
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "10"))
+    
+    # Chunking
+    CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "1500"))
+    CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "200"))
 
     @property
     def max_upload_bytes(self) -> int:

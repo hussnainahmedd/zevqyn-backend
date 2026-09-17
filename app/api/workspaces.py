@@ -11,7 +11,10 @@ from app.models.document import DocumentResponse, DocumentDownloadResponse
 from app.services import workspaces as workspace_service
 from app.services import documents as document_service
 from app.services import extraction as extraction_service
+from app.services import indexing as indexing_service
+from app.services import retrieval as retrieval_service
 from app.models.extraction import ExtractedDocument
+from app.models.chunking import IndexingResponse, RetrievedChunk
 
 router = APIRouter(prefix="/api/v1/workspaces", tags=["workspaces"])
 
@@ -126,4 +129,33 @@ async def extract_document(
 ):
     """Extract text from a private document."""
     return extraction_service.process_document(user.id, workspace_id, document_id)
+
+
+@router.post("/{workspace_id}/documents/{document_id}/index", response_model=IndexingResponse)
+async def index_document(
+    workspace_id: UUID,
+    document_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Run the complete document indexing pipeline (extract, chunk, embed, persist)."""
+    return indexing_service.index_document(user.id, workspace_id, document_id)
+
+
+from pydantic import BaseModel
+class SearchRequest(BaseModel):
+    query: str
+    match_count: int = 5
+
+
+@router.post("/{workspace_id}/search", response_model=list[RetrievedChunk])
+async def search_workspace(
+    workspace_id: UUID,
+    request: SearchRequest,
+    user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Retrieve semantically relevant document chunks within a workspace."""
+    # Verify workspace ownership first
+    workspace_service.get_workspace(user.id, workspace_id)
+    return retrieval_service.search_workspace(user.id, workspace_id, request.query, request.match_count)
+
 
