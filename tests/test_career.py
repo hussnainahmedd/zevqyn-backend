@@ -54,10 +54,8 @@ def test_create_skill(mock_db):
         json=malicious_payload
     )
     
-    assert response.status_code == 200
-    called_data = mock_client.table().insert.call_args[0][0]
-    assert called_data["user_id"] == FAKE_USER
-    assert "admin" not in called_data
+    # Pydantic forbid extra fields
+    assert response.status_code == 422
 
 @patch("app.services.career.get_admin_client")
 def test_update_skill_cross_user_rejected(mock_db):

@@ -144,15 +144,9 @@ def test_mass_assignment_prevention(mock_db):
         json=malicious_payload
     )
     
-    # Pydantic will drop 'admin_status' and 'featured' since it's not in ProjectCreate
-    # And the service explicitly overrides 'user_id' with the authenticated user
-    # Let's verify what data was actually sent to DB
-    assert response.status_code == 200
-    
-    called_data = mock_client.table().insert.call_args[0][0]
-    assert called_data["user_id"] == FAKE_USER # Security boundary held
-    assert "admin_status" not in called_data
-    assert "featured" not in called_data
+    # Pydantic will now reject 'admin_status' and 'featured' since it's not in ProjectCreate
+    # because of model_config = ConfigDict(extra="forbid")
+    assert response.status_code == 422
 
 
 from app.models.rag import Citation

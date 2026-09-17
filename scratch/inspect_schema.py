@@ -12,7 +12,7 @@ r = httpx.get(f"{url}/rest/v1/", headers={"apikey": key, "Authorization": f"Bear
 data = r.json()
 definitions = data.get("definitions", {})
 
-tables_to_check = ["projects", "skills", "education", "certificates"]
+tables_to_check = ["resumes", "resume_items", "portfolios", "portfolio_projects", "profiles", "projects", "skills", "education", "certificates"]
 for table in tables_to_check:
     if table in definitions:
         print(f"\n--- {table} ---")

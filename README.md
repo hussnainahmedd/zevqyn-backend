@@ -265,6 +265,19 @@ ZEVQYN allows you to seamlessly transition from unstructured research into a str
 
 Standard Project CRUD (`/api/v1/projects`) enforces strictly authenticated ownership and supports defining `technologies`, `skills`, `visibility`, and `source_document_id`.
 
+### Resumes & PDF Export (Phase 9)
+
+ZEVQYN includes a secure Resume Builder and PDF generation pipeline (`/api/v1/resumes`).
+* **Trusted Items**: Instead of arbitrary text entry, you attach your actual stored projects, skills, education, and certificates as `resume_items`.
+* **PDF Export**: Generate a clean, ATS-friendly PDF directly from the backend (`GET /api/v1/resumes/{id}/pdf`) using the lightweight `fpdf2` engine (fully compatible with serverless/container deployments). No Chromium or headless browser dependencies required.
+
+### Portfolios & Public Access (Phase 9)
+
+ZEVQYN allows you to curate your trusted records into a public-facing developer portfolio.
+* **Curated Projects**: Attach your verified projects via `/api/v1/portfolios/{id}/projects`.
+* **Public/Private Security**: Portfolios natively support `is_published` visibility.
+* **Safe Public Serialization**: Anonymous visitors can query published portfolios via `GET /api/v1/public/portfolios/{slug}`. This endpoint uses strict Pydantic isolation (`PublicPortfolioResponse`) to ensure no underlying user IDs, email addresses, RAG chunks, or internal data fields ever leak to the public internet.
+
 ### Career AI Assistant (Phase 8B)
 
 ZEVQYN includes a secure, grounded Career AI Assistant (`POST /api/v1/career/assistant`).

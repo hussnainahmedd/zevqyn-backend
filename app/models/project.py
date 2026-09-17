@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import UUID
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from app.models.rag import Citation
 
@@ -14,6 +14,8 @@ from app.models.rag import Citation
 # Database Models
 class ProjectCreate(BaseModel):
     """Request to explicitly create a project (from scratch or accepted preview)."""
+    model_config = ConfigDict(extra="forbid")
+    
     title: str = Field(..., min_length=1, max_length=200)
     short_description: str = Field(..., max_length=500)
     description: str = Field(..., max_length=5000)
@@ -29,6 +31,8 @@ class ProjectCreate(BaseModel):
 
 class ProjectUpdate(BaseModel):
     """Request to update a project."""
+    model_config = ConfigDict(extra="forbid")
+    
     title: Optional[str] = Field(None, min_length=1, max_length=200)
     short_description: Optional[str] = Field(None, max_length=500)
     description: Optional[str] = Field(None, max_length=5000)

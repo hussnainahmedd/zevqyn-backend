@@ -6,16 +6,18 @@ from typing import Optional
 from uuid import UUID
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 # Skills
 class SkillCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str = Field(..., min_length=1, max_length=100)
     category: str = Field(..., max_length=50)
     proficiency: int = Field(..., ge=1, le=5)
 
 class SkillUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     category: Optional[str] = Field(None, max_length=50)
     proficiency: Optional[int] = Field(None, ge=1, le=5)
@@ -31,6 +33,7 @@ class SkillResponse(BaseModel):
 
 # Education
 class EducationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     institution: str = Field(..., min_length=1, max_length=200)
     degree: str = Field(..., min_length=1, max_length=200)
     field_of_study: str = Field(..., min_length=1, max_length=200)
@@ -39,6 +42,7 @@ class EducationCreate(BaseModel):
     description: Optional[str] = Field(None, max_length=2000)
 
 class EducationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     institution: Optional[str] = Field(None, min_length=1, max_length=200)
     degree: Optional[str] = Field(None, min_length=1, max_length=200)
     field_of_study: Optional[str] = Field(None, min_length=1, max_length=200)
@@ -61,6 +65,7 @@ class EducationResponse(BaseModel):
 
 # Certificates
 class CertificateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     title: str = Field(..., min_length=1, max_length=200)
     issuer: str = Field(..., min_length=1, max_length=200)
     issue_date: date
@@ -70,6 +75,7 @@ class CertificateCreate(BaseModel):
     description: Optional[str] = Field(None, max_length=2000)
 
 class CertificateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     title: Optional[str] = Field(None, min_length=1, max_length=200)
     issuer: Optional[str] = Field(None, min_length=1, max_length=200)
     issue_date: Optional[date] = None
