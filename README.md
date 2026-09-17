@@ -117,6 +117,37 @@ Unauthenticated requests receive **401 Unauthorized**.
 * **Client-supplied user IDs are never trusted.** User identity always comes from the verified Supabase token.
 * Access tokens are never stored in user models or returned in API responses.
 * The service-role key is never exposed to clients.
+* **Strict ownership checks** — Database operations explicitly enforce `user_id = <authenticated_user_id>`.
+
+## Workspaces & Documents
+
+ZEVQYN manages research documents within user-owned Workspaces.
+
+### Workspace Endpoints
+
+* `POST /api/v1/workspaces` — Create a workspace
+* `GET /api/v1/workspaces` — List user's workspaces
+* `GET /api/v1/workspaces/{id}` — Get a specific workspace
+* `PATCH /api/v1/workspaces/{id}` — Update workspace metadata (name/description)
+* `DELETE /api/v1/workspaces/{id}` — Delete a workspace (must be empty)
+
+### Document Endpoints
+
+Documents are uploaded via multipart/form-data.
+
+* `POST /api/v1/workspaces/{id}/documents` — Upload a new document
+* `GET /api/v1/workspaces/{id}/documents` — List documents in a workspace
+* `GET /api/v1/workspaces/{ws_id}/documents/{doc_id}` — Get document metadata
+* `DELETE /api/v1/workspaces/{ws_id}/documents/{doc_id}` — Delete a document and its storage file
+* `GET /api/v1/workspaces/{ws_id}/documents/{doc_id}/download` — Get a short-lived (60s) signed URL to download the private file
+
+### File Upload Constraints
+
+* **Allowed types:** PDF, DOCX, TXT, Markdown (.md)
+* **Size limit:** Configurable via `MAX_UPLOAD_MB` (default: 10MB)
+* **Storage:** Files are securely stored in the private `research-documents` bucket.
+* **Path structure:** `<user_uuid>/<workspace_uuid>/<document_uuid>/<safe_filename>`
+* **Rollback:** If metadata insertion fails, the uploaded storage object is automatically cleaned up to prevent orphaned files.
 
 ## CORS
 

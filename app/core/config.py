@@ -38,6 +38,14 @@ class Settings:
         if o.strip()
     ]
 
+    # Upload limits
+    MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "10"))
+
+    @property
+    def max_upload_bytes(self) -> int:
+        """Maximum upload size in bytes."""
+        return self.MAX_UPLOAD_MB * 1024 * 1024
+
     @property
     def supabase_configured(self) -> bool:
         """Return True if the minimum Supabase variables are set."""
