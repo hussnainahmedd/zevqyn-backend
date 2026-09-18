@@ -129,11 +129,11 @@ def _extract_txt(content: bytes) -> list[ExtractedUnit]:
 def _extract_document_bytes(content: bytes, file_type: str) -> list[ExtractedUnit]:
     """Route extraction to the correct parser based on file type."""
     ft = file_type.lower()
-    if ft == ".pdf":
+    if ft == "pdf":
         return _extract_pdf(content)
-    elif ft == ".docx":
+    elif ft == "docx":
         return _extract_docx(content)
-    elif ft in [".txt", ".md"]:
+    elif ft in ["txt", "md"]:
         return _extract_txt(content)
     else:
         raise ValueError(f"Unsupported file type for extraction: {ft}")
