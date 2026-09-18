@@ -667,6 +667,23 @@ def test_export_pdf_with_all_personal_info(mock_get_resume, mock_get_items, mock
     assert response.content.startswith(b"%PDF")
     assert len(response.content) > 1000
 
+    # Extract text from generated PDF and verify all 8 personal header fields + certificate Credential ID
+    import pymupdf
+    doc = pymupdf.open(stream=response.content, filetype="pdf")
+    pdf_text = "".join(page.get_text() for page in doc)
+
+    assert "HUSSNAIN AHMAD" in pdf_text
+    assert "Full Stack Engineer" in pdf_text
+    assert "hussnain@example.com" in pdf_text
+    assert "+92 300 1234567" in pdf_text
+    assert "Islamabad, Pakistan" in pdf_text
+    assert "LinkedIn" in pdf_text
+    assert "GitHub" in pdf_text
+    assert "Portfolio" in pdf_text
+    assert "Credential ID: GCP-998877" in pdf_text
+    assert "PROFESSIONAL SUMMARY" in pdf_text
+    assert "Experienced full-stack engineer" in pdf_text
+
 
 @patch("app.services.resumes.get_admin_client")
 @patch("app.services.resumes.get_resume_items")
@@ -793,6 +810,172 @@ def test_export_pdf_skill_grouping_ignores_proficiency(mock_get_resume, mock_get
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/pdf"
     assert response.content.startswith(b"%PDF")
+
+
+@patch("app.services.resumes.get_certificate")
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume_items")
+@patch("app.services.resumes.get_resume")
+def test_export_pdf_certificate_raw_credential_id(mock_get_resume, mock_get_items, mock_db, mock_get_cert):
+    """Test Issue 2: certificate with description holding raw credential ID renders as 'Credential ID: <val>'."""
+    resume_id = uuid.uuid4()
+
+    class ResumeObj:
+        id = resume_id
+        name = "Cert Resume"
+        full_name = "Hussnain Ahmad"
+        professional_title = "Computer Science Student"
+        email = "ha7886899@gmail.com"
+        phone = None
+        location = "Islamabad, Pakistan"
+        linkedin_url = None
+        github_url = None
+        portfolio_url = None
+        professional_summary = None
+
+    class CertRecord:
+        title = "python programing"
+        issuer = "Coursera"
+        issue_date = "2026-02-12"
+        credential_id = None
+        credential_url = "https://coursera.org/verify/hbchbciqc"
+        description = "hbchbciqc"
+
+    cert_source_id = uuid.uuid4()
+    mock_get_cert.return_value = CertRecord()
+
+    class CertItem:
+        section_type = "certificate"
+        title = "python programing"
+        subtitle = "Coursera"
+        description = "Issued: 2026-02-12"
+        metadata = {"source_id": str(cert_source_id)}
+
+    mock_get_resume.return_value = ResumeObj()
+    mock_get_items.return_value = [CertItem()]
+
+    mock_client = mock_db.return_value
+    mock_res = MagicMock()
+    mock_res.data = []
+    mock_client.table().select().eq().execute.return_value = mock_res
+
+    response = client.get(
+        f"/api/v1/resumes/{resume_id}/pdf",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    assert response.content.startswith(b"%PDF")
+
+    import pymupdf
+    doc = pymupdf.open(stream=response.content, filetype="pdf")
+    pdf_text = "".join(page.get_text() for page in doc)
+
+    # Must contain formatted label
+    assert "Credential ID: hbchbciqc" in pdf_text
+    assert "Verify Credential" in pdf_text
+    # Raw token alone on a line without prefix must not appear
+    lines = [line.strip() for line in pdf_text.splitlines() if line.strip()]
+    assert "hbchbciqc" not in lines
+
+
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume_items")
+@patch("app.services.resumes.get_resume")
+def test_export_pdf_with_dict_resume(mock_get_resume, mock_get_items, mock_db):
+    """Test Issue 1: dict resume representation correctly extracts all fields."""
+    resume_id = uuid.uuid4()
+    resume_dict = {
+        "id": resume_id,
+        "name": "Dict Resume",
+        "full_name": "Dict Hussnain",
+        "professional_title": "Dict Developer",
+        "email": "dict@example.com",
+        "phone": "+1234567890",
+        "location": "Rawalpindi, Pakistan",
+        "linkedin_url": "https://linkedin.com/in/dict",
+        "github_url": "https://github.com/dict",
+        "portfolio_url": "https://dict.dev",
+        "professional_summary": "Dict summary text here.",
+    }
+    mock_get_resume.return_value = resume_dict
+    mock_get_items.return_value = []
+
+    mock_client = mock_db.return_value
+    mock_res = MagicMock()
+    mock_res.data = []
+    mock_client.table().select().eq().execute.return_value = mock_res
+
+    response = client.get(
+        f"/api/v1/resumes/{resume_id}/pdf",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    import pymupdf
+    doc = pymupdf.open(stream=response.content, filetype="pdf")
+    pdf_text = "".join(page.get_text() for page in doc)
+
+    assert "DICT HUSSNAIN" in pdf_text
+    assert "Dict Developer" in pdf_text
+    assert "dict@example.com" in pdf_text
+    assert "+1234567890" in pdf_text
+    assert "Rawalpindi, Pakistan" in pdf_text
+
+
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume_items")
+@patch("app.services.resumes.get_resume")
+def test_export_pdf_profile_fallbacks_when_resume_fields_null(mock_get_resume, mock_get_items, mock_db):
+    """Test Issue 1: profile fallbacks populate missing fields when resume fields are null."""
+    resume_id = uuid.uuid4()
+    class NullResume:
+        id = resume_id
+        name = "Empty Resume"
+        full_name = None
+        professional_title = None
+        email = None
+        phone = None
+        location = None
+        linkedin_url = None
+        github_url = None
+        portfolio_url = None
+        professional_summary = None
+
+    mock_get_resume.return_value = NullResume()
+    mock_get_items.return_value = []
+
+    mock_client = mock_db.return_value
+    mock_res = MagicMock()
+    mock_res.data = [{
+        "full_name": "Profile Name",
+        "bio": "Profile Bio Title",
+        "location": "Profile City",
+        "phone": "+92 333 1112233",
+        "linkedin_url": "https://linkedin.com/in/profile",
+        "github_url": "https://github.com/profile",
+        "website": "https://profile.me",
+    }]
+    mock_client.table().select().eq().execute.return_value = mock_res
+
+    response = client.get(
+        f"/api/v1/resumes/{resume_id}/pdf",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    import pymupdf
+    doc = pymupdf.open(stream=response.content, filetype="pdf")
+    pdf_text = "".join(page.get_text() for page in doc)
+
+    assert "PROFILE NAME" in pdf_text
+    assert "Profile Bio Title" in pdf_text
+    assert "Profile City" in pdf_text
+    assert "+92 333 1112233" in pdf_text
+    assert "LinkedIn" in pdf_text
+    assert "GitHub" in pdf_text
+    assert "Portfolio" in pdf_text
+
 
 
 

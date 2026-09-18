@@ -317,6 +317,44 @@ def _render_section_heading(pdf: FPDF, title: str) -> None:
     pdf.ln(2.5)
 
 
+def _get_field_val(
+    resume_obj: Any,
+    profile_dict: dict[str, Any],
+    key: str,
+    fallback_profile_keys: list[str] | None = None,
+    default: str | None = None,
+) -> str | None:
+    """Extract a field prioritizing resume data (dict or obj attribute), falling back to profile/default."""
+    val = None
+    if isinstance(resume_obj, dict):
+        val = resume_obj.get(key)
+    else:
+        val = getattr(resume_obj, key, None)
+        if val is None and hasattr(resume_obj, "__dict__"):
+            val = resume_obj.__dict__.get(key)
+
+    if isinstance(val, (str, int, float)):
+        val_str = str(val).strip()
+        if val_str and val_str.lower() not in ("none", "null", "undefined"):
+            return val_str
+
+    if isinstance(profile_dict, dict):
+        keys_to_check = [key] + (fallback_profile_keys or [])
+        for pk in keys_to_check:
+            pval = profile_dict.get(pk)
+            if isinstance(pval, (str, int, float)):
+                pval_str = str(pval).strip()
+                if pval_str and pval_str.lower() not in ("none", "null", "undefined"):
+                    return pval_str
+
+    if isinstance(default, (str, int, float)):
+        def_str = str(default).strip()
+        if def_str and def_str.lower() not in ("none", "null", "undefined"):
+            return def_str
+
+    return None
+
+
 # ==============================================================================
 # PDF GENERATION
 # ==============================================================================
@@ -325,15 +363,22 @@ def export_resume_pdf(user_id: UUID, resume_id: UUID) -> Response:
     resume = get_resume(user_id, resume_id)
     items = get_resume_items(user_id, resume_id)
     
-    # Fetch profile to get real name fallback (best effort)
+    # Fetch profile and auth data to get comprehensive fallback info (best effort)
     client = get_admin_client()
-    profile_full_name = "User Resume"
+    profile_data: dict[str, Any] = {}
+    auth_email: str | None = None
     try:
         profile_res = client.table("profiles").select("*").eq("id", str(user_id)).execute()
-        if profile_res.data and profile_res.data[0].get("full_name"):
-            profile_full_name = profile_res.data[0]["full_name"]
-        elif profile_res.data and profile_res.data[0].get("username"):
-            profile_full_name = profile_res.data[0]["username"]
+        if profile_res.data and isinstance(profile_res.data, list) and isinstance(profile_res.data[0], dict):
+            profile_data = profile_res.data[0]
+    except Exception:
+        pass
+
+    try:
+        auth_user = client.auth.admin.get_user_by_id(str(user_id))
+        raw_email = getattr(getattr(auth_user, "user", None), "email", None)
+        if isinstance(raw_email, str) and raw_email.strip():
+            auth_email = raw_email.strip()
     except Exception:
         pass
         
@@ -347,42 +392,44 @@ def export_resume_pdf(user_id: UUID, resume_id: UUID) -> Response:
     # 1. HEADER
     # --------------------------------------------------------------------------
     # Full Name (most prominent, bold 18pt, centered)
-    name_to_use = getattr(resume, "full_name", None)
-    if not name_to_use or not str(name_to_use).strip():
-        name_to_use = profile_full_name
-    name_clean = _clean_text(str(name_to_use).strip())
+    name_to_use = _get_field_val(
+        resume, profile_data, "full_name", fallback_profile_keys=["username"], default="User Resume"
+    )
+    name_clean = _clean_text(name_to_use or "")
     if name_clean:
         pdf.set_font("helvetica", "B", 18)
         pdf.cell(0, 8, name_clean.upper(), align="C", new_x="LMARGIN", new_y="NEXT")
 
     # Professional Title (11pt, centered)
-    prof_title = getattr(resume, "professional_title", None)
-    if prof_title and str(prof_title).strip():
+    prof_title = _get_field_val(resume, profile_data, "professional_title", fallback_profile_keys=["bio"])
+    if prof_title:
         pdf.set_font("helvetica", "", 11)
-        pdf.cell(0, 5, _clean_text(str(prof_title).strip()), align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 5, _clean_text(prof_title), align="C", new_x="LMARGIN", new_y="NEXT")
 
     # Contact line: location | email | phone
+    loc_val = _get_field_val(resume, profile_data, "location")
+    email_val = _get_field_val(resume, profile_data, "email", default=auth_email)
+    phone_val = _get_field_val(resume, profile_data, "phone")
     contact_parts = []
-    for field_val in [
-        getattr(resume, "location", None),
-        getattr(resume, "email", None),
-        getattr(resume, "phone", None),
-    ]:
-        if field_val and str(field_val).strip() and str(field_val).strip().lower() not in ("none", "null", "undefined"):
-            contact_parts.append(_clean_text(str(field_val).strip()))
+    for val in [loc_val, email_val, phone_val]:
+        if val:
+            contact_parts.append(_clean_text(val))
 
     if contact_parts:
         pdf.set_font("helvetica", "", 9.5)
         pdf.cell(0, 5, " | ".join(contact_parts), align="C", new_x="LMARGIN", new_y="NEXT")
 
     # Professional Links: LinkedIn | GitHub | Portfolio
+    linkedin_val = _get_field_val(resume, profile_data, "linkedin_url")
+    github_val = _get_field_val(resume, profile_data, "github_url")
+    portfolio_val = _get_field_val(resume, profile_data, "portfolio_url", fallback_profile_keys=["website"])
     link_entries = []
-    for label, field_val in [
-        ("LinkedIn", getattr(resume, "linkedin_url", None)),
-        ("GitHub", getattr(resume, "github_url", None)),
-        ("Portfolio", getattr(resume, "portfolio_url", None)),
+    for label, val in [
+        ("LinkedIn", linkedin_val),
+        ("GitHub", github_val),
+        ("Portfolio", portfolio_val),
     ]:
-        entry = _format_url_label(field_val, default_label=label)
+        entry = _format_url_label(val, default_label=label)
         if entry:
             link_entries.append(entry)
 
@@ -405,11 +452,11 @@ def export_resume_pdf(user_id: UUID, resume_id: UUID) -> Response:
     # --------------------------------------------------------------------------
     # 2. PROFESSIONAL SUMMARY
     # --------------------------------------------------------------------------
-    summary_text = getattr(resume, "professional_summary", None)
+    summary_text = _get_field_val(resume, profile_data, "professional_summary")
     if _is_valid_summary(summary_text):
         _render_section_heading(pdf, "PROFESSIONAL SUMMARY")
         pdf.set_font("helvetica", "", 10)
-        pdf.multi_cell(0, 4.8, _clean_text(str(summary_text).strip()), new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(0, 4.8, _clean_text(summary_text or ""), new_x="LMARGIN", new_y="NEXT")
         pdf.ln(3)
 
     # Group items by section_type
@@ -593,14 +640,16 @@ def export_resume_pdf(user_id: UUID, resume_id: UUID) -> Response:
                     pass
 
             item_desc = getattr(item, "description", None)
-            if not date_str and item_desc:
+            if item_desc:
                 parts = str(item_desc).split(" | ")
                 for p in parts:
-                    if p.startswith("Issued:"):
+                    if p.startswith("Issued:") and not date_str:
                         raw_d = p.replace("Issued:", "").strip()
                         date_str = _format_date(raw_d)
-                    elif p.startswith("ID:"):
+                    elif p.startswith("ID:") and not cred_id:
                         cred_id = p.replace("ID:", "").strip()
+                    elif p.lower().startswith("credential id:") and not cred_id:
+                        cred_id = p.split(":", 1)[1].strip()
                     elif not desc_str:
                         desc_str = p.strip()
 
@@ -623,19 +672,46 @@ def export_resume_pdf(user_id: UUID, resume_id: UUID) -> Response:
 
             detail_parts = []
             if cred_id:
-                detail_parts.append(f"Credential ID: {cred_id}")
-            if desc_str:
-                detail_parts.append(desc_str)
+                clean_cid = str(cred_id).strip()
+                if clean_cid.lower().startswith("credential id:"):
+                    clean_cid = clean_cid[len("credential id:"):].strip()
+                elif clean_cid.lower().startswith("id:"):
+                    clean_cid = clean_cid[len("id:"):].strip()
+                detail_parts.append(f"Credential ID: {clean_cid}")
+
+            if desc_str and str(desc_str).strip():
+                clean_desc = str(desc_str).strip()
+                if cred_id and clean_desc.lower() in (
+                    str(cred_id).lower(),
+                    f"id: {str(cred_id).lower()}",
+                    f"credential id: {str(cred_id).lower()}"
+                ):
+                    pass
+                elif not cred_id:
+                    if clean_desc.lower().startswith("credential id:"):
+                        val = clean_desc[len("credential id:"):].strip()
+                        detail_parts.append(f"Credential ID: {val}")
+                    elif clean_desc.lower().startswith("id:"):
+                        val = clean_desc[len("id:"):].strip()
+                        detail_parts.append(f"Credential ID: {val}")
+                    else:
+                        detail_parts.append(f"Credential ID: {clean_desc}")
+                else:
+                    detail_parts.append(clean_desc)
 
             if detail_parts or cred_url:
                 pdf.set_font("helvetica", "", 9)
+                pdf.set_text_color(60, 60, 60)
                 if detail_parts:
                     pdf.write(4.5, _clean_text(" | ".join(detail_parts)))
                 if cred_url:
                     if detail_parts:
+                        pdf.set_text_color(100, 100, 100)
                         pdf.write(4.5, " | ")
                     full_url = cred_url if cred_url.startswith(("http://", "https://")) else f"https://{cred_url}"
+                    pdf.set_text_color(0, 0, 0)
                     pdf.write(4.5, "Verify Credential", link=full_url)
+                pdf.set_text_color(0, 0, 0)
                 pdf.ln(4.5)
 
             pdf.ln(2.5)
@@ -648,7 +724,7 @@ def export_resume_pdf(user_id: UUID, resume_id: UUID) -> Response:
         content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="resume_{resume.id}.pdf"'
+            "Content-Disposition": f'attachment; filename="resume_{resume_id}.pdf"'
         }
     )
 
