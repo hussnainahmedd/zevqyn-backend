@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import re
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 from fastapi import HTTPException
@@ -160,81 +162,484 @@ def delete_resume_item(user_id: UUID, resume_id: UUID, item_id: UUID) -> dict:
 
 
 # ==============================================================================
+# PDF HELPERS & FORMATTING
+# ==============================================================================
+def _clean_text(text: str | None) -> str:
+    """Safely convert unicode text to latin-1 compatible string for standard FPDF fonts."""
+    if not text:
+        return ""
+    subs = {
+        "\u2013": "-",       # en-dash
+        "\u2014": " - ",     # em-dash
+        "\u2018": "'",       # left single quote
+        "\u2019": "'",       # right single quote
+        "\u201c": '"',       # left double quote
+        "\u201d": '"',       # right double quote
+        "\u2022": "\u00b7",   # bullet -> middle dot
+        "\u2026": "...",     # ellipsis
+        "\u00a0": " ",       # non-breaking space
+        "\u200b": "",        # zero-width space
+        "\u2010": "-",       # hyphen
+        "\u2011": "-",       # non-breaking hyphen
+        "\u2012": "-",       # figure dash
+    }
+    s = str(text)
+    for orig, repl in subs.items():
+        s = s.replace(orig, repl)
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
+def _format_date(d: Any) -> str:
+    """Convert date or date string into clean 'Mon YYYY' format (e.g., 'Sep 2024')."""
+    if not d:
+        return ""
+    if isinstance(d, (date, datetime)):
+        return d.strftime("%b %Y")
+    s = str(d).strip()
+    if not s:
+        return ""
+    if s.lower() in ("present", "current", "now"):
+        return "Present"
+    m = re.match(r"^(\d{4})-(\d{2})(?:-\d{2})?$", s)
+    if m:
+        months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        year = m.group(1)
+        month_idx = int(m.group(2)) - 1
+        if 0 <= month_idx < 12:
+            return f"{months[month_idx]} {year}"
+    if re.match(r"^\d{4}$", s):
+        return s
+    return s
+
+
+def _format_date_range(start: Any, end: Any = None) -> str:
+    """Format start and end into a clean date range, avoiding awkward formatting."""
+    if not start and not end:
+        return ""
+    if start and not end:
+        s_str = str(start).strip()
+        if re.search(r"\s+[-–—]\s+", s_str):
+            parts = re.split(r"\s+[-–—]\s+", s_str, maxsplit=1)
+            p0 = _format_date(parts[0])
+            p1 = _format_date(parts[1]) if parts[1] else "Present"
+            return f"{p0} - {p1}"
+        return f"{_format_date(start)} - Present"
+    f_start = _format_date(start)
+    f_end = _format_date(end) if end else "Present"
+    if f_start and f_end:
+        return f"{f_start} - {f_end}"
+    return f_start or f_end
+
+
+def _format_degree(degree: str | None, field_of_study: str | None = None) -> str:
+    """Format degree and field of study, avoiding redundancy like 'BS Computer Science in Computer Science'."""
+    deg = (degree or "").strip()
+    field = (field_of_study or "").strip()
+    if deg and field:
+        if field.lower() in deg.lower():
+            return deg
+        if deg.lower() in field.lower():
+            return field
+        return f"{deg} in {field}"
+    if deg and not field:
+        if " in " in deg:
+            parts = deg.split(" in ", 1)
+            p0 = parts[0].strip()
+            p1 = parts[1].strip()
+            if p1.lower() in p0.lower():
+                return p0
+        return deg
+    return field
+
+
+def _format_url_label(url: str | None, default_label: str = "Link") -> tuple[str, str] | None:
+    """Return a tuple of (display_label, full_url) or None if url is empty or invalid."""
+    if not url:
+        return None
+    s = str(url).strip()
+    if not s or s.lower() in ("none", "null", "undefined"):
+        return None
+    full_url = s if s.startswith(("http://", "https://", "mailto:")) else f"https://{s}"
+    return default_label, full_url
+
+
+def _group_skills(items: list[Any]) -> dict[str, list[str]]:
+    """Group skills by category and ignore numeric proficiency ratings."""
+    groups: dict[str, list[str]] = {}
+    for item in items:
+        raw_cat = getattr(item, "subtitle", None) or "Other Skills"
+        cat = raw_cat.strip()
+        if not cat:
+            cat = "Skills"
+        elif cat.islower():
+            cat = cat.title()
+        
+        name = getattr(item, "title", "").strip()
+        if not name:
+            continue
+        
+        if cat not in groups:
+            groups[cat] = []
+        if name not in groups[cat]:
+            groups[cat].append(name)
+    return groups
+
+
+def _is_valid_summary(summary: str | None) -> bool:
+    """Check if professional summary contains genuine content instead of placeholder text."""
+    if not summary:
+        return False
+    cleaned = summary.strip().lower().rstrip(".")
+    placeholders = {
+        "professional summary",
+        "add your professional summary",
+        "summary",
+        "professional summary text",
+        "n/a",
+        "none",
+        "null",
+        "your summary here",
+    }
+    return len(cleaned) > 0 and cleaned not in placeholders
+
+
+def _render_section_heading(pdf: FPDF, title: str) -> None:
+    """Render a consistent ATS section heading with a subtle horizontal rule."""
+    if pdf.h - pdf.b_margin - pdf.get_y() < 25:
+        pdf.add_page()
+    
+    pdf.set_font("helvetica", "B", 11)
+    pdf.cell(0, 6, title, new_x="LMARGIN", new_y="NEXT")
+    y = pdf.get_y()
+    pdf.set_line_width(0.3)
+    pdf.set_draw_color(160, 160, 160)
+    pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
+    pdf.ln(2.5)
+
+
+# ==============================================================================
 # PDF GENERATION
 # ==============================================================================
 def export_resume_pdf(user_id: UUID, resume_id: UUID) -> Response:
-    """Generate a clean ATS-friendly PDF from trusted database records."""
+    """Generate a clean ATS-friendly single-column PDF from trusted database records."""
     resume = get_resume(user_id, resume_id)
     items = get_resume_items(user_id, resume_id)
     
-    # Fetch profile to get real name (best effort)
+    # Fetch profile to get real name fallback (best effort)
     client = get_admin_client()
-    profile_res = client.table("profiles").select("*").eq("id", str(user_id)).execute()
-    full_name = "User Resume"
-    if profile_res.data and profile_res.data[0].get("full_name"):
-        full_name = profile_res.data[0]["full_name"]
-    elif profile_res.data and profile_res.data[0].get("username"):
-        full_name = profile_res.data[0]["username"]
+    profile_full_name = "User Resume"
+    try:
+        profile_res = client.table("profiles").select("*").eq("id", str(user_id)).execute()
+        if profile_res.data and profile_res.data[0].get("full_name"):
+            profile_full_name = profile_res.data[0]["full_name"]
+        elif profile_res.data and profile_res.data[0].get("username"):
+            profile_full_name = profile_res.data[0]["username"]
+    except Exception:
+        pass
         
     pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_margins(15, 15, 15)
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
-    
-    def safe_text(text: str) -> str:
-        if not text:
-            return ""
-        # FPDF2 with default fonts supports latin-1. Replace unsupported chars safely.
-        return text.encode("latin-1", "replace").decode("latin-1")
-    
-    # Header
-    pdf.set_font("helvetica", "B", 16)
-    pdf.cell(0, 10, safe_text(full_name), align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("helvetica", "", 12)
-    pdf.cell(0, 10, safe_text(resume.name), align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(5)
-    
-    # Summary
-    if resume.professional_summary:
-        pdf.set_font("helvetica", "B", 14)
-        pdf.cell(0, 10, "SUMMARY", new_x="LMARGIN", new_y="NEXT")
+    content_w = pdf.w - pdf.l_margin - pdf.r_margin
+
+    # --------------------------------------------------------------------------
+    # 1. HEADER
+    # --------------------------------------------------------------------------
+    # Full Name (most prominent, bold 18pt, centered)
+    name_to_use = getattr(resume, "full_name", None)
+    if not name_to_use or not str(name_to_use).strip():
+        name_to_use = profile_full_name
+    name_clean = _clean_text(str(name_to_use).strip())
+    if name_clean:
+        pdf.set_font("helvetica", "B", 18)
+        pdf.cell(0, 8, name_clean.upper(), align="C", new_x="LMARGIN", new_y="NEXT")
+
+    # Professional Title (11pt, centered)
+    prof_title = getattr(resume, "professional_title", None)
+    if prof_title and str(prof_title).strip():
         pdf.set_font("helvetica", "", 11)
-        pdf.multi_cell(0, 6, safe_text(resume.professional_summary), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 5, _clean_text(str(prof_title).strip()), align="C", new_x="LMARGIN", new_y="NEXT")
+
+    # Contact line: location | email | phone
+    contact_parts = []
+    for field_val in [
+        getattr(resume, "location", None),
+        getattr(resume, "email", None),
+        getattr(resume, "phone", None),
+    ]:
+        if field_val and str(field_val).strip() and str(field_val).strip().lower() not in ("none", "null", "undefined"):
+            contact_parts.append(_clean_text(str(field_val).strip()))
+
+    if contact_parts:
+        pdf.set_font("helvetica", "", 9.5)
+        pdf.cell(0, 5, " | ".join(contact_parts), align="C", new_x="LMARGIN", new_y="NEXT")
+
+    # Professional Links: LinkedIn | GitHub | Portfolio
+    link_entries = []
+    for label, field_val in [
+        ("LinkedIn", getattr(resume, "linkedin_url", None)),
+        ("GitHub", getattr(resume, "github_url", None)),
+        ("Portfolio", getattr(resume, "portfolio_url", None)),
+    ]:
+        entry = _format_url_label(field_val, default_label=label)
+        if entry:
+            link_entries.append(entry)
+
+    if link_entries:
+        pdf.set_font("helvetica", "", 9.5)
+        sep = " | "
+        sep_w = pdf.get_string_width(sep)
+        total_w = sum(pdf.get_string_width(lbl) for lbl, _ in link_entries) + sep_w * (len(link_entries) - 1)
+        pdf.set_x((pdf.w - total_w) / 2)
+        for i, (lbl, url) in enumerate(link_entries):
+            if i > 0:
+                pdf.set_text_color(100, 100, 100)
+                pdf.write(5, sep)
+            pdf.set_text_color(0, 0, 0)
+            pdf.write(5, lbl, link=url)
         pdf.ln(5)
-    
+
+    pdf.ln(3)
+
+    # --------------------------------------------------------------------------
+    # 2. PROFESSIONAL SUMMARY
+    # --------------------------------------------------------------------------
+    summary_text = getattr(resume, "professional_summary", None)
+    if _is_valid_summary(summary_text):
+        _render_section_heading(pdf, "PROFESSIONAL SUMMARY")
+        pdf.set_font("helvetica", "", 10)
+        pdf.multi_cell(0, 4.8, _clean_text(str(summary_text).strip()), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(3)
+
     # Group items by section_type
-    sections = {}
+    sections: dict[str, list[Any]] = {}
     for item in items:
         sections.setdefault(item.section_type, []).append(item)
-        
-    # Render sections in standard order
-    order = ["education", "project", "skill", "certificate"]
-    titles = {
-        "education": "EDUCATION",
-        "project": "PROJECTS",
-        "skill": "SKILLS",
-        "certificate": "CERTIFICATES"
-    }
-    
-    for section_type in order:
-        if section_type in sections:
-            pdf.set_font("helvetica", "B", 14)
-            pdf.cell(0, 10, titles[section_type], new_x="LMARGIN", new_y="NEXT")
-            
-            for item in sections[section_type]:
-                pdf.set_font("helvetica", "B", 12)
-                pdf.multi_cell(0, 6, safe_text(item.title), new_x="LMARGIN", new_y="NEXT")
-                
-                if item.subtitle:
-                    pdf.set_font("helvetica", "I", 11)
-                    pdf.multi_cell(0, 6, safe_text(item.subtitle), new_x="LMARGIN", new_y="NEXT")
-                    
-                if item.description:
-                    pdf.set_font("helvetica", "", 11)
-                    pdf.multi_cell(0, 6, safe_text(item.description), new_x="LMARGIN", new_y="NEXT")
-                    
-                pdf.ln(3)
-            pdf.ln(2)
-            
+
+    # --------------------------------------------------------------------------
+    # 3. EDUCATION
+    # --------------------------------------------------------------------------
+    if "education" in sections and sections["education"]:
+        _render_section_heading(pdf, "EDUCATION")
+        for item in sections["education"]:
+            inst = getattr(item, "title", "") or ""
+            degree_str = getattr(item, "subtitle", "") or ""
+            date_str = ""
+            desc_str = ""
+
+            item_metadata = getattr(item, "metadata", None)
+            source_id = item_metadata.get("source_id") if isinstance(item_metadata, dict) else None
+            edu_rec = None
+            if source_id:
+                try:
+                    edu_rec = get_education(user_id, UUID(str(source_id)))
+                except Exception:
+                    pass
+
+            if edu_rec:
+                inst = edu_rec.institution
+                degree_str = _format_degree(edu_rec.degree, edu_rec.field_of_study)
+                date_str = _format_date_range(edu_rec.start_date, edu_rec.end_date)
+                desc_str = edu_rec.description or ""
+            else:
+                degree_str = _format_degree(degree_str)
+                item_desc = getattr(item, "description", None)
+                if item_desc:
+                    parts = str(item_desc).split(" | ", 1)
+                    date_str = _format_date_range(parts[0])
+                    if len(parts) > 1:
+                        desc_str = parts[1].strip()
+
+            if pdf.h - pdf.b_margin - pdf.get_y() < 18:
+                pdf.add_page()
+
+            pdf.set_font("helvetica", "B", 10.5)
+            date_display = _clean_text(date_str)
+            date_w = pdf.get_string_width(date_display) + 4 if date_display else 0
+            inst_w = content_w - date_w
+
+            pdf.cell(inst_w, 5, _clean_text(inst), align="L")
+            if date_display:
+                pdf.set_font("helvetica", "", 9.5)
+                pdf.cell(date_w, 5, date_display, align="R", new_x="LMARGIN", new_y="NEXT")
+            else:
+                pdf.ln(5)
+
+            if degree_str:
+                pdf.set_font("helvetica", "I", 10)
+                pdf.multi_cell(0, 4.5, _clean_text(degree_str), new_x="LMARGIN", new_y="NEXT")
+
+            if desc_str:
+                pdf.set_font("helvetica", "", 9.5)
+                pdf.multi_cell(0, 4.2, _clean_text(desc_str), new_x="LMARGIN", new_y="NEXT")
+
+            pdf.ln(2.5)
+
+    # --------------------------------------------------------------------------
+    # 4. PROJECTS
+    # --------------------------------------------------------------------------
+    if "project" in sections and sections["project"]:
+        _render_section_heading(pdf, "PROJECTS")
+        for item in sections["project"]:
+            proj_title = getattr(item, "title", "") or ""
+            tech_str = getattr(item, "subtitle", "") or ""
+            desc_str = getattr(item, "description", "") or ""
+            proj_links = []
+
+            item_metadata = getattr(item, "metadata", None)
+            source_id = item_metadata.get("source_id") if isinstance(item_metadata, dict) else None
+            if source_id:
+                try:
+                    proj_rec = get_project(user_id, UUID(str(source_id)))
+                    if proj_rec:
+                        proj_title = proj_rec.title
+                        if proj_rec.technologies:
+                            tech_str = " \u00b7 ".join(proj_rec.technologies)
+                        desc_str = proj_rec.short_description or proj_rec.description or desc_str
+                        if proj_rec.github_url:
+                            gh_entry = _format_url_label(proj_rec.github_url, default_label="GitHub")
+                            if gh_entry:
+                                proj_links.append(gh_entry)
+                        if proj_rec.live_url:
+                            live_entry = _format_url_label(proj_rec.live_url, default_label="Live Demo")
+                            if live_entry:
+                                proj_links.append(live_entry)
+                except Exception:
+                    pass
+
+            if "," in tech_str and "\u00b7" not in tech_str:
+                tech_str = " \u00b7 ".join([t.strip() for t in tech_str.split(",") if t.strip()])
+
+            if pdf.h - pdf.b_margin - pdf.get_y() < 20:
+                pdf.add_page()
+
+            pdf.set_font("helvetica", "B", 10.5)
+            if proj_links:
+                pdf.set_font("helvetica", "", 9)
+                link_w = sum(pdf.get_string_width(lbl) for lbl, _ in proj_links) + (len(proj_links) - 1) * pdf.get_string_width(" | ") + 4
+                title_w = content_w - link_w
+                pdf.set_font("helvetica", "B", 10.5)
+                pdf.cell(title_w, 5, _clean_text(proj_title), align="L")
+                pdf.set_font("helvetica", "", 9)
+                for i, (lbl, url) in enumerate(proj_links):
+                    if i > 0:
+                        pdf.set_text_color(100, 100, 100)
+                        pdf.write(5, " | ")
+                    pdf.set_text_color(0, 0, 0)
+                    pdf.write(5, lbl, link=url)
+                pdf.ln(5)
+            else:
+                pdf.cell(0, 5, _clean_text(proj_title), new_x="LMARGIN", new_y="NEXT")
+
+            if tech_str:
+                pdf.set_font("helvetica", "I", 9.5)
+                pdf.multi_cell(0, 4.5, _clean_text(tech_str), new_x="LMARGIN", new_y="NEXT")
+
+            if desc_str:
+                pdf.set_font("helvetica", "", 9.5)
+                lines = [l.strip() for l in str(desc_str).split("\n") if l.strip()]
+                for line in lines:
+                    if not line.startswith(("\u00b7", "-", "*", "\u2022")):
+                        line = f"\u00b7 {line}"
+                    pdf.multi_cell(0, 4.2, _clean_text(line), new_x="LMARGIN", new_y="NEXT")
+
+            pdf.ln(2.5)
+
+    # --------------------------------------------------------------------------
+    # 5. SKILLS
+    # --------------------------------------------------------------------------
+    if "skill" in sections and sections["skill"]:
+        _render_section_heading(pdf, "SKILLS")
+        grouped_skills = _group_skills(sections["skill"])
+        for cat, skill_names in grouped_skills.items():
+            if pdf.h - pdf.b_margin - pdf.get_y() < 10:
+                pdf.add_page()
+            prefix = f"{cat}: "
+            names_str = ", ".join(skill_names)
+            pdf.set_font("helvetica", "B", 9.5)
+            pdf.write(4.8, _clean_text(prefix))
+            pdf.set_font("helvetica", "", 9.5)
+            pdf.write(4.8, _clean_text(names_str))
+            pdf.ln(4.8)
+        pdf.ln(2)
+
+    # --------------------------------------------------------------------------
+    # 6. CERTIFICATIONS
+    # --------------------------------------------------------------------------
+    if "certificate" in sections and sections["certificate"]:
+        _render_section_heading(pdf, "CERTIFICATIONS")
+        for item in sections["certificate"]:
+            cert_title = getattr(item, "title", "") or ""
+            issuer = getattr(item, "subtitle", "") or ""
+            date_str = ""
+            cred_id = None
+            cred_url = None
+            desc_str = ""
+
+            item_metadata = getattr(item, "metadata", None)
+            source_id = item_metadata.get("source_id") if isinstance(item_metadata, dict) else None
+            if source_id:
+                try:
+                    cert_rec = get_certificate(user_id, UUID(str(source_id)))
+                    if cert_rec:
+                        cert_title = cert_rec.title
+                        issuer = cert_rec.issuer
+                        date_str = _format_date(cert_rec.issue_date)
+                        cred_id = cert_rec.credential_id
+                        cred_url = cert_rec.credential_url
+                        desc_str = cert_rec.description or ""
+                except Exception:
+                    pass
+
+            item_desc = getattr(item, "description", None)
+            if not date_str and item_desc:
+                parts = str(item_desc).split(" | ")
+                for p in parts:
+                    if p.startswith("Issued:"):
+                        raw_d = p.replace("Issued:", "").strip()
+                        date_str = _format_date(raw_d)
+                    elif p.startswith("ID:"):
+                        cred_id = p.replace("ID:", "").strip()
+                    elif not desc_str:
+                        desc_str = p.strip()
+
+            if pdf.h - pdf.b_margin - pdf.get_y() < 15:
+                pdf.add_page()
+
+            date_display = _clean_text(date_str)
+            pdf.set_font("helvetica", "", 9.5)
+            date_w = pdf.get_string_width(date_display) + 4 if date_display else 0
+            title_w = content_w - date_w
+
+            title_issuer = f"{cert_title} - {issuer}" if issuer else cert_title
+            pdf.set_font("helvetica", "B", 10)
+            pdf.cell(title_w, 5, _clean_text(title_issuer), align="L")
+            if date_display:
+                pdf.set_font("helvetica", "", 9.5)
+                pdf.cell(date_w, 5, date_display, align="R", new_x="LMARGIN", new_y="NEXT")
+            else:
+                pdf.ln(5)
+
+            detail_parts = []
+            if cred_id:
+                detail_parts.append(f"Credential ID: {cred_id}")
+            if desc_str:
+                detail_parts.append(desc_str)
+
+            if detail_parts or cred_url:
+                pdf.set_font("helvetica", "", 9)
+                if detail_parts:
+                    pdf.write(4.5, _clean_text(" | ".join(detail_parts)))
+                if cred_url:
+                    if detail_parts:
+                        pdf.write(4.5, " | ")
+                    full_url = cred_url if cred_url.startswith(("http://", "https://")) else f"https://{cred_url}"
+                    pdf.write(4.5, "Verify Credential", link=full_url)
+                pdf.ln(4.5)
+
+            pdf.ln(2.5)
+
     # Output PDF
     pdf_bytes = bytes(pdf.output())
     
@@ -246,3 +651,4 @@ def export_resume_pdf(user_id: UUID, resume_id: UUID) -> Response:
             "Content-Disposition": f'attachment; filename="resume_{resume.id}.pdf"'
         }
     )
+

@@ -515,3 +515,284 @@ def test_update_resume_partial_preserves_unspecified(mock_db):
     assert "template" not in called_update
 
 
+# ==============================================================================
+# PDF EXPORT & FORMATTING TESTS
+# ==============================================================================
+from datetime import date
+from app.services.resumes import (
+    _clean_text,
+    _format_date,
+    _format_date_range,
+    _format_degree,
+    _format_url_label,
+    _group_skills,
+    _is_valid_summary,
+)
+
+
+def test_pdf_formatting_helpers():
+    # 1. _clean_text
+    assert _clean_text(None) == ""
+    assert _clean_text("") == ""
+    assert _clean_text("Hello \u2013 World") == "Hello - World"
+    assert _clean_text("Step 1 \u2014 Step 2") == "Step 1  -  Step 2"
+    assert _clean_text("\u2018single\u2019 and \u201cdouble\u201d") == "'single' and \"double\""
+    assert _clean_text("\u2022 bullet") == "\u00b7 bullet"
+
+    # 2. _format_date
+    assert _format_date(None) == ""
+    assert _format_date("") == ""
+    assert _format_date(date(2024, 9, 1)) == "Sep 2024"
+    assert _format_date("2024-09-01") == "Sep 2024"
+    assert _format_date("2024-09") == "Sep 2024"
+    assert _format_date("2024") == "2024"
+    assert _format_date("Present") == "Present"
+    assert _format_date("present") == "Present"
+    assert _format_date("current") == "Present"
+
+    # 3. _format_date_range
+    assert _format_date_range(None) == ""
+    assert _format_date_range("2024-09-01", "2028-06-30") == "Sep 2024 - Jun 2028"
+    assert _format_date_range("2024-09-01", None) == "Sep 2024 - Present"
+    assert _format_date_range("2024-09-01", "Present") == "Sep 2024 - Present"
+    assert _format_date_range("2024-09-01 - Present") == "Sep 2024 - Present"
+    assert _format_date_range("2024-09-01 \u2013 2028-06-30") == "Sep 2024 - Jun 2028"
+
+    # 4. _format_degree
+    assert _format_degree("BS Computer Science", "Computer Science") == "BS Computer Science"
+    assert _format_degree("Bachelor of Science", "Computer Science") == "Bachelor of Science in Computer Science"
+    assert _format_degree("BS Computer Science in Computer Science") == "BS Computer Science"
+    assert _format_degree("Computer Science", "BS Computer Science") == "BS Computer Science"
+    assert _format_degree("BS Computer Science", None) == "BS Computer Science"
+
+    # 5. _format_url_label
+    assert _format_url_label(None) is None
+    assert _format_url_label("None") is None
+    assert _format_url_label("null") is None
+    assert _format_url_label("https://linkedin.com/in/test", "LinkedIn") == ("LinkedIn", "https://linkedin.com/in/test")
+    assert _format_url_label("github.com/test", "GitHub") == ("GitHub", "https://github.com/test")
+
+    # 6. _is_valid_summary
+    assert _is_valid_summary(None) is False
+    assert _is_valid_summary("") is False
+    assert _is_valid_summary("Professional Summary") is False
+    assert _is_valid_summary("Add your professional summary.") is False
+    assert _is_valid_summary("Summary") is False
+    assert _is_valid_summary("Passionate software engineer with 5 years experience.") is True
+
+    # 7. _group_skills
+    class Item:
+        def __init__(self, title, subtitle=None):
+            self.title = title
+            self.subtitle = subtitle
+
+    skill_items = [
+        Item("JavaScript", "languages"),
+        Item("Python", "languages"),
+        Item("FastAPI", "Backend"),
+        Item("PostgreSQL", "Databases"),
+        Item("JavaScript", "languages"),  # duplicate
+    ]
+    grouped = _group_skills(skill_items)
+    assert grouped == {
+        "Languages": ["JavaScript", "Python"],
+        "Backend": ["FastAPI"],
+        "Databases": ["PostgreSQL"],
+    }
+
+
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume_items")
+@patch("app.services.resumes.get_resume")
+def test_export_pdf_with_all_personal_info(mock_get_resume, mock_get_items, mock_db):
+    resume_id = uuid.uuid4()
+    
+    class FullResume:
+        id = resume_id
+        name = "Full ATS Resume"
+        full_name = "Hussnain Ahmad"
+        professional_title = "Full Stack Engineer"
+        email = "hussnain@example.com"
+        phone = "+92 300 1234567"
+        location = "Islamabad, Pakistan"
+        linkedin_url = "https://linkedin.com/in/hussnain"
+        github_url = "https://github.com/hussnain"
+        portfolio_url = "https://hussnain.dev"
+        professional_summary = "Experienced full-stack engineer specializing in FastAPI and modern cloud architecture."
+
+    class EduItem:
+        section_type = "education"
+        title = "Air University"
+        subtitle = "BS Computer Science in Computer Science"
+        description = "2024-09-01 - Present | Top 5% of class"
+        metadata = None
+
+    class ProjItem:
+        section_type = "project"
+        title = "ZEVQYN AI Platform"
+        subtitle = "Python, FastAPI, Supabase"
+        description = "Built an end-to-end AI career workspace.\nImplemented ATS resume export."
+        metadata = None
+
+    class SkillItem:
+        section_type = "skill"
+        title = "FastAPI"
+        subtitle = "Backend"
+        description = "Proficiency: 5/5"
+        metadata = None
+
+    class CertItem:
+        section_type = "certificate"
+        title = "Professional Cloud Architect"
+        subtitle = "Google Cloud"
+        description = "Issued: 2025-06-15 | ID: GCP-998877"
+        metadata = None
+
+    mock_get_resume.return_value = FullResume()
+    mock_get_items.return_value = [EduItem(), ProjItem(), SkillItem(), CertItem()]
+
+    mock_client = mock_db.return_value
+    mock_res = MagicMock()
+    mock_res.data = [{"full_name": "Fallback Name"}]
+    mock_client.table().select().eq().execute.return_value = mock_res
+
+    response = client.get(
+        f"/api/v1/resumes/{resume_id}/pdf",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-disposition"] == f'attachment; filename="resume_{resume_id}.pdf"'
+    assert response.content.startswith(b"%PDF")
+    assert len(response.content) > 1000
+
+
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume_items")
+@patch("app.services.resumes.get_resume")
+def test_export_pdf_with_null_personal_info(mock_get_resume, mock_get_items, mock_db):
+    resume_id = uuid.uuid4()
+
+    class LegacyResume:
+        id = resume_id
+        name = "Legacy Resume"
+        full_name = None
+        professional_title = None
+        email = None
+        phone = None
+        location = None
+        linkedin_url = None
+        github_url = None
+        portfolio_url = None
+        professional_summary = None
+
+    mock_get_resume.return_value = LegacyResume()
+    mock_get_items.return_value = []
+
+    mock_client = mock_db.return_value
+    mock_res = MagicMock()
+    mock_res.data = [{"full_name": "Profile Full Name"}]
+    mock_client.table().select().eq().execute.return_value = mock_res
+
+    response = client.get(
+        f"/api/v1/resumes/{resume_id}/pdf",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content.startswith(b"%PDF")
+
+
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume_items")
+@patch("app.services.resumes.get_resume")
+def test_export_pdf_empty_sections_and_placeholder_summary(mock_get_resume, mock_get_items, mock_db):
+    resume_id = uuid.uuid4()
+
+    class ResumeWithPlaceholder:
+        id = resume_id
+        name = "Empty Resume"
+        full_name = "Jane Doe"
+        professional_title = "Developer"
+        email = "jane@example.com"
+        phone = None
+        location = None
+        linkedin_url = None
+        github_url = None
+        portfolio_url = None
+        # Placeholder summary must be omitted
+        professional_summary = "Add your professional summary."
+
+    mock_get_resume.return_value = ResumeWithPlaceholder()
+    mock_get_items.return_value = []
+
+    mock_client = mock_db.return_value
+    mock_res = MagicMock()
+    mock_res.data = []
+    mock_client.table().select().eq().execute.return_value = mock_res
+
+    response = client.get(
+        f"/api/v1/resumes/{resume_id}/pdf",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content.startswith(b"%PDF")
+
+
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume_items")
+@patch("app.services.resumes.get_resume")
+def test_export_pdf_skill_grouping_ignores_proficiency(mock_get_resume, mock_get_items, mock_db):
+    resume_id = uuid.uuid4()
+
+    class ResumeObj:
+        id = resume_id
+        name = "Skills Resume"
+        full_name = "Skill Tester"
+        professional_title = "Polyglot Dev"
+        email = "test@example.com"
+        phone = None
+        location = None
+        linkedin_url = None
+        github_url = None
+        portfolio_url = None
+        professional_summary = "Passionate engineer."
+
+    class SkillItem:
+        def __init__(self, title, category, proficiency):
+            self.section_type = "skill"
+            self.title = title
+            self.subtitle = category
+            self.description = f"Proficiency: {proficiency}/5"
+            self.metadata = None
+
+    items = [
+        SkillItem("Python", "Languages", 5),
+        SkillItem("JavaScript", "Languages", 4),
+        SkillItem("FastAPI", "Backend", 5),
+        SkillItem("PostgreSQL", "Databases", 4),
+    ]
+
+    mock_get_resume.return_value = ResumeObj()
+    mock_get_items.return_value = items
+
+    mock_client = mock_db.return_value
+    mock_res = MagicMock()
+    mock_res.data = [{"full_name": "Skill Tester"}]
+    mock_client.table().select().eq().execute.return_value = mock_res
+
+    response = client.get(
+        f"/api/v1/resumes/{resume_id}/pdf",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content.startswith(b"%PDF")
+
+
+
