@@ -18,6 +18,14 @@ class ResumeCreate(BaseModel):
     template: str = Field("professional", max_length=100)
     professional_summary: Optional[str] = Field(None, max_length=2000)
     visibility: str = Field("private", pattern="^(public|private)$")
+    full_name: Optional[str] = Field(None, max_length=150)
+    professional_title: Optional[str] = Field(None, max_length=150)
+    email: Optional[str] = Field(None, max_length=254)
+    phone: Optional[str] = Field(None, max_length=50)
+    location: Optional[str] = Field(None, max_length=150)
+    linkedin_url: Optional[str] = Field(None, max_length=500)
+    github_url: Optional[str] = Field(None, max_length=500)
+    portfolio_url: Optional[str] = Field(None, max_length=500)
 
 
 class ResumeUpdate(BaseModel):
@@ -26,6 +34,14 @@ class ResumeUpdate(BaseModel):
     template: Optional[str] = Field(None, max_length=100)
     professional_summary: Optional[str] = Field(None, max_length=2000)
     visibility: Optional[str] = Field(None, pattern="^(public|private)$")
+    full_name: Optional[str] = Field(None, max_length=150)
+    professional_title: Optional[str] = Field(None, max_length=150)
+    email: Optional[str] = Field(None, max_length=254)
+    phone: Optional[str] = Field(None, max_length=50)
+    location: Optional[str] = Field(None, max_length=150)
+    linkedin_url: Optional[str] = Field(None, max_length=500)
+    github_url: Optional[str] = Field(None, max_length=500)
+    portfolio_url: Optional[str] = Field(None, max_length=500)
 
 
 class ResumeResponse(BaseModel):
@@ -35,6 +51,14 @@ class ResumeResponse(BaseModel):
     template: str
     professional_summary: Optional[str] = None
     visibility: str
+    full_name: Optional[str] = None
+    professional_title: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    location: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    github_url: Optional[str] = None
+    portfolio_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
