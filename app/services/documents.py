@@ -81,7 +81,7 @@ def upload_document(user_id: UUID, workspace_id: UUID, file: UploadFile) -> Docu
         "filename": safe_filename,
         "original_filename": file.filename,
         "storage_path": storage_path,
-        "file_type": ext,
+        "file_type": ext.lstrip("."),
         "file_size": file_size,
         "status": "uploaded",
     }
