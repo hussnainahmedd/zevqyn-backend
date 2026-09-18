@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from uuid import UUID
 from fastapi import HTTPException
+from google.genai import types
 
+from app.core.config import settings
 from app.core.supabase import get_admin_client
 from app.models.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectProposalPreview, _GeminiProjectProposal
 from app.models.rag import Citation
@@ -96,18 +98,21 @@ def generate_project_proposal(
     
     ai_client = _get_genai_client()
     
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        temperature=0.4,
+        response_mime_type="application/json",
+        response_schema=_GeminiProjectProposal,
+    )
+    
     try:
         response = ai_client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=settings.GEMINI_GENERATION_MODEL,
             contents=context,
-            config={
-                "system_instruction": system_instruction,
-                "response_mime_type": "application/json",
-                "response_schema": _GeminiProjectProposal,
-                "temperature": 0.4
-            }
+            config=config,
         )
     except Exception as e:
+        print("PROJECT GENERATION ERROR:", repr(e), flush=True)
         raise HTTPException(status_code=502, detail="AI generation failed")
         
     try:
@@ -117,13 +122,21 @@ def generate_project_proposal(
         
         parsed = _GeminiProjectProposal.model_validate_json(raw_output)
     except Exception as e:
+        print("PROJECT PARSING ERROR:", repr(e), flush=True)
         raise HTTPException(status_code=500, detail="Malformed response from AI")
         
     # Process citations
+    citations_map = {c.source_id: c for c in all_citations} if isinstance(all_citations, list) else all_citations
     valid_citations = []
     for s_id in parsed.source_ids:
-        if s_id in all_citations:
-            valid_citations.append(all_citations[s_id])
+        if s_id in citations_map:
+            valid_citations.append(citations_map[s_id])
+        else:
+            clean_id = s_id.strip("[]")
+            if clean_id in citations_map:
+                valid_citations.append(citations_map[clean_id])
+            elif f"[{clean_id}]" in citations_map:
+                valid_citations.append(citations_map[f"[{clean_id}]"])
             
     return ProjectProposalPreview(
         title=parsed.title,
