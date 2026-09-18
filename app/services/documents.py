@@ -92,14 +92,17 @@ def upload_document(user_id: UUID, workspace_id: UUID, file: UploadFile) -> Docu
             raise Exception("No data returned from database insert")
         return DocumentResponse(**db_res.data[0])
     except Exception as e:
-        # 5. Rollback storage upload if DB insert fails
+        # Roll back uploaded file if metadata insert fails
         try:
             client.storage.from_(BUCKET_NAME).remove([storage_path])
         except Exception:
-            pass # We tried our best
+            pass
+
+        print("DOCUMENT METADATA INSERT ERROR:", repr(e))
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save document metadata"
+            detail=f"Failed to save document metadata: {str(e)}"
         )
 
 
