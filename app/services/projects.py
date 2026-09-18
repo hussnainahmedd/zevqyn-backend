@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 from fastapi import HTTPException
-from google.genai import types
 
-from app.core.config import settings
 from app.core.supabase import get_admin_client
 from app.models.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectProposalPreview, _GeminiProjectProposal
 from app.models.rag import Citation
@@ -96,6 +94,9 @@ def generate_project_proposal(
         "Only cite SOURCE_N markers for claims derived directly from the research."
     )
     
+    from google.genai import types
+    from app.core.config import settings
+
     ai_client = _get_genai_client()
     
     config = types.GenerateContentConfig(
