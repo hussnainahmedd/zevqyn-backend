@@ -38,6 +38,10 @@ def setup_auth():
         ("/api/v1/career/ai/review-resume", "post", {"resume_id": str(uuid.uuid4())}),
         ("/api/v1/career/ai/review-portfolio", "post", {"portfolio_id": str(uuid.uuid4())}),
         ("/api/v1/career/ai/action-plan", "post", {"target_role": "Cloud Architect"}),
+        ("/api/v1/career/ai/chat", "post", {"message": "What should I learn?"}),
+        ("/api/v1/career/ai/conversations", "get", None),
+        (f"/api/v1/career/ai/conversations/{uuid.uuid4()}", "get", None),
+        (f"/api/v1/career/ai/conversations/{uuid.uuid4()}", "delete", None),
     ],
 )
 def test_career_ai_requires_auth(endpoint, method, payload):
@@ -457,3 +461,402 @@ def test_gemini_invalid_json_returns_500(mock_ai):
     )
     assert resp.status_code == 500
     assert "Failed to parse structured response from AI" in resp.json()["detail"]
+
+
+# ==============================================================================
+# H. CAREER AI PERSISTENT CHAT (PHASE 2)
+# ==============================================================================
+@patch("app.services.career_ai.get_full_career_context")
+@patch("app.services.career_ai._get_genai_client")
+@patch("app.services.career_ai.get_admin_client")
+def test_career_chat_new_conversation(mock_db, mock_ai, mock_ctx):
+    conv_id = str(uuid.uuid4())
+    from app.models.career_ai import CareerProfileStats
+    mock_ctx.return_value = ({"skills": [{"name": "Python"}]}, CareerProfileStats(skills=1))
+
+    mock_client = mock_db.return_value
+    mock_conv_table = MagicMock()
+    mock_msg_table = MagicMock()
+
+    # Mock conversation insert
+    conv_res = MagicMock()
+    conv_res.data = [{
+        "id": conv_id,
+        "user_id": FAKE_USER,
+        "workspace_id": None,
+        "title": "What should I learn next?",
+        "assistant_type": "career",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }]
+    mock_conv_table.insert.return_value.execute.return_value = conv_res
+
+    # Mock previous messages select
+    prev_msg_res = MagicMock()
+    prev_msg_res.data = []
+    mock_msg_table.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value = prev_msg_res
+
+    # Mock message insert
+    msg_res = MagicMock()
+    msg_res.data = [{"id": str(uuid.uuid4())}]
+    mock_msg_table.insert.return_value.execute.return_value = msg_res
+
+    def table_router(table_name):
+        if table_name == "conversations":
+            return mock_conv_table
+        elif table_name == "messages":
+            return mock_msg_table
+        return MagicMock()
+
+    mock_client.table.side_effect = table_router
+
+    # Mock Gemini
+    gemini_res = MagicMock()
+    gemini_res.text = "Based on your Python skill, you should learn FastAPI and Docker next."
+    mock_ai.return_value.models.generate_content.return_value = gemini_res
+
+    resp = client.post(
+        "/api/v1/career/ai/chat",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"message": "What should I learn next?"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["conversation_id"] == conv_id
+    assert data["answer"] == "Based on your Python skill, you should learn FastAPI and Docker next."
+    assert data["profile_used"]["skills"] == 1
+
+    # Verify conversation created with assistant_type == "career" and workspace_id is None
+    insert_call_args = mock_conv_table.insert.call_args[0][0]
+    assert insert_call_args["assistant_type"] == "career"
+    assert insert_call_args["workspace_id"] is None
+    assert insert_call_args["user_id"] == FAKE_USER
+
+
+@patch("app.services.career_ai.get_full_career_context")
+@patch("app.services.career_ai._get_genai_client")
+@patch("app.services.career_ai.get_admin_client")
+def test_career_chat_existing_conversation(mock_db, mock_ai, mock_ctx):
+    conv_id = str(uuid.uuid4())
+    from app.models.career_ai import CareerProfileStats
+    mock_ctx.return_value = ({"skills": [{"name": "Python"}]}, CareerProfileStats(skills=1))
+
+    mock_client = mock_db.return_value
+    mock_conv_table = MagicMock()
+    mock_msg_table = MagicMock()
+
+    # Mock conversation lookup
+    conv_res = MagicMock()
+    conv_res.data = [{
+        "id": conv_id,
+        "user_id": FAKE_USER,
+        "assistant_type": "career",
+    }]
+    mock_conv_table.select.return_value.eq.return_value.eq.return_value.execute.return_value = conv_res
+
+    # Mock previous messages select
+    prev_msg_res = MagicMock()
+    prev_msg_res.data = [
+        {"role": "user", "content": "Hello", "created_at": "2026-01-01T00:00:00Z"},
+        {"role": "assistant", "content": "Hi! How can I help your career?", "created_at": "2026-01-01T00:01:00Z"},
+    ]
+    mock_msg_table.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value = prev_msg_res
+
+    def table_router(table_name):
+        if table_name == "conversations":
+            return mock_conv_table
+        elif table_name == "messages":
+            return mock_msg_table
+        return MagicMock()
+
+    mock_client.table.side_effect = table_router
+
+    gemini_res = MagicMock()
+    gemini_res.text = "Here is advice on tutorials."
+    mock_ai.return_value.models.generate_content.return_value = gemini_res
+
+    resp = client.post(
+        "/api/v1/career/ai/chat",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={
+            "message": "Where can I find tutorials?",
+            "conversation_id": conv_id,
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["conversation_id"] == conv_id
+    assert data["answer"] == "Here is advice on tutorials."
+
+    # Verify Gemini was called with multi-turn history
+    gen_call_args = mock_ai.return_value.models.generate_content.call_args
+    contents = gen_call_args.kwargs.get("contents") or gen_call_args[1].get("contents")
+    assert len(contents) >= 3
+
+
+@patch("app.services.career_ai.get_full_career_context")
+@patch("app.services.career_ai._get_genai_client")
+@patch("app.services.career_ai.get_admin_client")
+def test_career_chat_history_bounded(mock_db, mock_ai, mock_ctx):
+    conv_id = str(uuid.uuid4())
+    from app.models.career_ai import CareerProfileStats
+    mock_ctx.return_value = ({}, CareerProfileStats())
+
+    mock_client = mock_db.return_value
+    mock_conv_table = MagicMock()
+    mock_msg_table = MagicMock()
+
+    conv_res = MagicMock()
+    conv_res.data = [{
+        "id": conv_id,
+        "user_id": FAKE_USER,
+        "assistant_type": "career",
+    }]
+    mock_conv_table.select.return_value.eq.return_value.eq.return_value.execute.return_value = conv_res
+
+    # 16 previous messages
+    prev_messages = []
+    for i in range(16):
+        role = "user" if i % 2 == 0 else "assistant"
+        prev_messages.append({"role": role, "content": f"Message {i}", "created_at": f"2026-01-01T00:{i:02d}:00Z"})
+
+    prev_msg_res = MagicMock()
+    prev_msg_res.data = prev_messages
+    mock_msg_table.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value = prev_msg_res
+
+    def table_router(table_name):
+        if table_name == "conversations":
+            return mock_conv_table
+        elif table_name == "messages":
+            return mock_msg_table
+        return MagicMock()
+
+    mock_client.table.side_effect = table_router
+
+    gemini_res = MagicMock()
+    gemini_res.text = "Bounded reply."
+    mock_ai.return_value.models.generate_content.return_value = gemini_res
+
+    resp = client.post(
+        "/api/v1/career/ai/chat",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={
+            "message": "New message",
+            "conversation_id": conv_id,
+        },
+    )
+
+    assert resp.status_code == 200
+    gen_call_args = mock_ai.return_value.models.generate_content.call_args
+    contents = gen_call_args.kwargs.get("contents") or gen_call_args[1].get("contents")
+    # MAX_HISTORY_MESSAGES is 10, plus 1 new user message = at most 11 items
+    assert len(contents) <= 11
+
+
+@patch("app.services.career_ai.get_admin_client")
+def test_career_chat_unowned_conversation_returns_404(mock_db):
+    mock_client = mock_db.return_value
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+
+    resp = client.post(
+        "/api/v1/career/ai/chat",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"message": "Hello", "conversation_id": str(uuid.uuid4())},
+    )
+    assert resp.status_code == 404
+
+
+@patch("app.services.career_ai.get_admin_client")
+def test_career_chat_non_career_conversation_returns_404(mock_db):
+    mock_client = mock_db.return_value
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+        {"id": str(uuid.uuid4()), "user_id": FAKE_USER, "assistant_type": "research"}
+    ]
+
+    resp = client.post(
+        "/api/v1/career/ai/chat",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"message": "Hello", "conversation_id": str(uuid.uuid4())},
+    )
+    assert resp.status_code == 404
+
+
+def test_career_chat_validation():
+    # Empty message
+    resp = client.post(
+        "/api/v1/career/ai/chat",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"message": "   "},
+    )
+    assert resp.status_code == 400
+
+    # Extra fields forbidden
+    resp = client.post(
+        "/api/v1/career/ai/chat",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"message": "Hello", "extra_field": "disallowed"},
+    )
+    assert resp.status_code == 422
+
+
+@patch("app.services.career_ai.get_full_career_context")
+@patch("app.services.career_ai._get_genai_client")
+@patch("app.services.career_ai.get_admin_client")
+def test_career_chat_gemini_failure_returns_502(mock_db, mock_ai, mock_ctx):
+    from app.models.career_ai import CareerProfileStats
+    mock_ctx.return_value = ({}, CareerProfileStats())
+
+    mock_client = mock_db.return_value
+    mock_client.table.return_value.insert.return_value.execute.return_value.data = [{"id": str(uuid.uuid4())}]
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value.data = []
+
+    mock_ai.return_value.models.generate_content.side_effect = RuntimeError("Gemini error")
+
+    resp = client.post(
+        "/api/v1/career/ai/chat",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"message": "Hello"},
+    )
+    assert resp.status_code == 502
+
+
+# ==============================================================================
+# I. CONVERSATION MANAGEMENT ENDPOINTS
+# ==============================================================================
+@patch("app.services.career_ai.get_admin_client")
+def test_list_career_conversations(mock_db):
+    conv_id = str(uuid.uuid4())
+    mock_client = mock_db.return_value
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value.data = [
+        {
+            "id": conv_id,
+            "user_id": FAKE_USER,
+            "title": "Career Strategy",
+            "assistant_type": "career",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T01:00:00Z",
+        }
+    ]
+
+    resp = client.get(
+        "/api/v1/career/ai/conversations",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["id"] == conv_id
+    assert data[0]["title"] == "Career Strategy"
+    assert data[0]["assistant_type"] == "career"
+    assert "user_id" not in data[0]
+
+
+@patch("app.services.career_ai.get_admin_client")
+def test_get_career_conversation_detail(mock_db):
+    conv_id = str(uuid.uuid4())
+    msg_id = str(uuid.uuid4())
+    mock_client = mock_db.return_value
+
+    mock_conv_table = MagicMock()
+    mock_conv_table.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+        {
+            "id": conv_id,
+            "user_id": FAKE_USER,
+            "title": "Roadmap",
+            "assistant_type": "career",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T01:00:00Z",
+        }
+    ]
+
+    mock_msg_table = MagicMock()
+    mock_msg_table.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value.data = [
+        {
+            "id": msg_id,
+            "conversation_id": conv_id,
+            "user_id": FAKE_USER,
+            "role": "user",
+            "content": "What should I do?",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+    ]
+
+    def table_router(table_name):
+        if table_name == "conversations":
+            return mock_conv_table
+        elif table_name == "messages":
+            return mock_msg_table
+        return MagicMock()
+
+    mock_client.table.side_effect = table_router
+
+    resp = client.get(
+        f"/api/v1/career/ai/conversations/{conv_id}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == conv_id
+    assert len(data["messages"]) == 1
+    assert data["messages"][0]["id"] == msg_id
+    assert data["messages"][0]["role"] == "user"
+    assert "user_id" not in data["messages"][0]
+
+
+@patch("app.services.career_ai.get_admin_client")
+def test_get_career_conversation_detail_not_found(mock_db):
+    mock_client = mock_db.return_value
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+
+    resp = client.get(
+        f"/api/v1/career/ai/conversations/{uuid.uuid4()}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert resp.status_code == 404
+
+
+@patch("app.services.career_ai.get_admin_client")
+def test_delete_career_conversation_success(mock_db):
+    conv_id = str(uuid.uuid4())
+    mock_client = mock_db.return_value
+
+    mock_conv_table = MagicMock()
+    mock_conv_table.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+        {
+            "id": conv_id,
+            "user_id": FAKE_USER,
+            "assistant_type": "career",
+        }
+    ]
+
+    def table_router(table_name):
+        if table_name == "conversations":
+            return mock_conv_table
+        return MagicMock()
+
+    mock_client.table.side_effect = table_router
+
+    resp = client.delete(
+        f"/api/v1/career/ai/conversations/{conv_id}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+
+
+@patch("app.services.career_ai.get_admin_client")
+def test_delete_career_conversation_ownership_protection(mock_db):
+    mock_client = mock_db.return_value
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+
+    resp = client.delete(
+        f"/api/v1/career/ai/conversations/{uuid.uuid4()}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+    assert resp.status_code == 404
+

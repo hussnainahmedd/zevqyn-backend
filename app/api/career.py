@@ -24,6 +24,10 @@ from app.models.career_ai import (
     PortfolioReviewResponse,
     ActionPlanRequest,
     ActionPlanResponse,
+    CareerChatRequest,
+    CareerChatResponse,
+    CareerConversationResponse,
+    CareerConversationDetailResponse,
 )
 from app.services import career as career_service
 from app.services import career_ai as career_ai_service
@@ -164,4 +168,43 @@ async def career_action_plan(
 ):
     """Generate a structured 30/60/90-day career roadmap towards target role."""
     return career_ai_service.generate_action_plan(user.id, request)
+
+
+# ==============================================================================
+# CAREER AI CHAT (PHASE 2)
+# ==============================================================================
+@router.post("/ai/chat", response_model=CareerChatResponse)
+async def career_chat(
+    request: CareerChatRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Execute a grounded, multi-turn career chat turn with persistence."""
+    return career_ai_service.process_career_chat(user.id, request)
+
+
+@router.get("/ai/conversations", response_model=list[CareerConversationResponse])
+async def list_career_conversations(
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """List all career conversations owned by the authenticated user."""
+    return career_ai_service.get_career_conversations(user.id)
+
+
+@router.get("/ai/conversations/{conversation_id}", response_model=CareerConversationDetailResponse)
+async def get_career_conversation_detail(
+    conversation_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Retrieve metadata and ordered messages for a career conversation."""
+    return career_ai_service.get_career_conversation_detail(user.id, conversation_id)
+
+
+@router.delete("/ai/conversations/{conversation_id}")
+async def delete_career_conversation(
+    conversation_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Delete a career conversation and its messages."""
+    return career_ai_service.delete_career_conversation(user.id, conversation_id)
+
 

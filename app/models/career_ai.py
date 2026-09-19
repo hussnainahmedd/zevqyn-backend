@@ -1,7 +1,6 @@
 """Pydantic models for ZEVQYN Career AI module."""
 
-from __future__ import annotations
-
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict
@@ -187,3 +186,44 @@ class _GeminiActionPlanOutput(BaseModel):
     days_30: list[ActionPlanItem]
     days_60: list[ActionPlanItem]
     days_90: list[ActionPlanItem]
+
+
+# ==============================================================================
+# G. PERSISTENT CAREER CHAT (PHASE 2)
+# ==============================================================================
+class CareerChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(..., min_length=1, max_length=2000)
+    conversation_id: Optional[UUID] = None
+
+
+class CareerChatResponse(BaseModel):
+    conversation_id: UUID
+    answer: str
+    profile_used: CareerProfileStats
+
+
+class CareerChatMessageResponse(BaseModel):
+    id: UUID
+    conversation_id: UUID
+    role: str
+    content: str
+    created_at: str
+
+
+class CareerConversationResponse(BaseModel):
+    id: UUID
+    title: Optional[str] = None
+    assistant_type: str = "career"
+    created_at: str
+    updated_at: str
+
+
+class CareerConversationDetailResponse(BaseModel):
+    id: UUID
+    title: Optional[str] = None
+    assistant_type: str = "career"
+    created_at: str
+    updated_at: str
+    messages: list[CareerChatMessageResponse]
+
