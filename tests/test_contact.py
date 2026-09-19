@@ -9,8 +9,6 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.contact import require_admin_user
-from app.core.auth import AuthenticatedUser
 from app.main import app
 from app.models.contact import ContactStatusUpdate
 from pydantic import ValidationError
@@ -27,6 +25,24 @@ VALID_PAYLOAD = {
     "subject": "Support",
     "message": "I need help with my portfolio project deployment.",
 }
+
+
+def _mock_user(
+    *,
+    user_id: str = FAKE_USER_ID,
+    email: str = "user@example.com",
+    app_metadata: dict | None = None,
+    user_metadata: dict | None = None,
+):
+    """Build mock Supabase UserResponse with specific metadata."""
+    user = MagicMock()
+    user.id = user_id
+    user.email = email
+    user.app_metadata = app_metadata if app_metadata is not None else {}
+    user.user_metadata = user_metadata if user_metadata is not None else {}
+    res = MagicMock()
+    res.user = user
+    return res
 
 
 # ==============================================================================
@@ -59,13 +75,12 @@ def test_valid_public_contact_submission(mock_db):
 
 @patch("app.services.contact.get_admin_client")
 def test_no_authorization_header_required_for_post(mock_db):
-    """Verify that POST /api/v1/contact works completely anonymously."""
+    """Verify that POST /api/v1/contact works completely anonymously without auth."""
     mock_client = mock_db.return_value
     mock_client.table.return_value.insert.return_value.execute.return_value.data = [
         {"id": FAKE_MESSAGE_ID}
     ]
 
-    # Explicitly ensure no headers sent
     resp = client.post("/api/v1/contact", json=VALID_PAYLOAD)
     assert resp.status_code == 200
     assert resp.json()["success"] is True
@@ -209,9 +224,9 @@ def test_database_failure_returns_safe_error(mock_db):
     ],
 )
 def test_management_endpoints_cannot_be_accessed_anonymously(endpoint, method, payload):
-    """Anonymous visitors cannot access or mutate management routes."""
+    """Anonymous visitors cannot access or mutate management routes and receive 401."""
     resp = client.request(method, endpoint, json=payload)
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 401
 
 
 @pytest.mark.parametrize(
@@ -222,45 +237,90 @@ def test_management_endpoints_cannot_be_accessed_anonymously(endpoint, method, p
         (f"/api/v1/contact/messages/{FAKE_MESSAGE_ID}", "patch", {"status": "read"}),
     ],
 )
-def test_management_endpoints_safely_disabled_for_authenticated_users(endpoint, method, payload):
-    """Because ZEVQYN has no admin role model, authenticated users are denied with 403."""
-    with patch("app.core.auth.get_admin_client") as mock_auth:
-        user = MagicMock()
-        user.id = FAKE_USER_ID
-        user.email = "student@example.com"
-        mock_auth.return_value.auth.get_user.return_value = MagicMock(user=user)
+@patch("app.core.auth.get_admin_client")
+def test_normal_authenticated_user_cannot_access_management_endpoints(mock_auth, endpoint, method, payload):
+    """Authenticated users without app_metadata.role == 'admin' receive 403."""
+    mock_auth.return_value.auth.get_user.return_value = _mock_user(
+        app_metadata={"role": "user"}
+    )
 
-        resp = client.request(
-            method,
-            endpoint,
-            headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
-            json=payload,
-        )
-        assert resp.status_code == 403
-        assert "Admin authorization is not configured" in resp.json()["detail"]
+    resp = client.request(
+        method,
+        endpoint,
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json=payload,
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Admin access required"
 
 
-# ==============================================================================
-# 5. STATUS VALIDATION FOR MANAGEMENT UPDATE
-# ==============================================================================
-def test_status_update_model_validation():
-    """Verify ContactStatusUpdate accepts only allowed status values."""
-    # Valid statuses
-    for s in ["new", "read", "replied", "archived"]:
-        m = ContactStatusUpdate(status=s)
-        assert m.status == s
+@pytest.mark.parametrize(
+    "endpoint,method,payload",
+    [
+        ("/api/v1/contact/messages", "get", None),
+        (f"/api/v1/contact/messages/{FAKE_MESSAGE_ID}", "get", None),
+        (f"/api/v1/contact/messages/{FAKE_MESSAGE_ID}", "patch", {"status": "read"}),
+    ],
+)
+@patch("app.core.auth.get_admin_client")
+def test_spoofed_user_metadata_role_does_not_grant_admin(mock_auth, endpoint, method, payload):
+    """Untrusted user_metadata containing role='admin' must be ignored and rejected with 403."""
+    mock_auth.return_value.auth.get_user.return_value = _mock_user(
+        user_metadata={"role": "admin"},  # Attacker injected into user_metadata
+        app_metadata={"role": "user"},    # Trusted Supabase metadata is NOT admin
+    )
 
-    # Invalid status
-    with pytest.raises(ValidationError):
-        ContactStatusUpdate(status="deleted")
-
-    with pytest.raises(ValidationError):
-        ContactStatusUpdate(status="pending")
+    resp = client.request(
+        method,
+        endpoint,
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json=payload,
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Admin access required"
 
 
 @patch("app.services.contact.get_admin_client")
-def test_management_update_status_endpoint_when_admin_override(mock_db):
-    """Verify endpoint schema validation when admin authorization is bypassed via override."""
+@patch("app.core.auth.get_admin_client")
+def test_admin_authenticated_user_can_list_messages(mock_auth, mock_db):
+    """Admin user with app_metadata.role == 'admin' can list contact messages."""
+    mock_auth.return_value.auth.get_user.return_value = _mock_user(
+        app_metadata={"role": "admin"}
+    )
+    mock_client = mock_db.return_value
+    mock_client.table.return_value.select.return_value.order.return_value.execute.return_value.data = [
+        {
+            "id": FAKE_MESSAGE_ID,
+            "name": "Ali Khan",
+            "email": "ali@example.com",
+            "subject": "Support",
+            "message": "Need help with portfolio.",
+            "status": "new",
+            "created_at": "2026-09-19T10:00:00Z",
+        }
+    ]
+
+    resp = client.get(
+        "/api/v1/contact/messages",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["id"] == FAKE_MESSAGE_ID
+    assert data[0]["name"] == "Ali Khan"
+    assert data[0]["status"] == "new"
+
+
+@patch("app.services.contact.get_admin_client")
+@patch("app.core.auth.get_admin_client")
+def test_admin_can_retrieve_single_message(mock_auth, mock_db):
+    """Admin user can retrieve an individual message by ID."""
+    mock_auth.return_value.auth.get_user.return_value = _mock_user(
+        app_metadata={"role": "admin"}
+    )
     mock_client = mock_db.return_value
     mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
         {
@@ -268,42 +328,94 @@ def test_management_update_status_endpoint_when_admin_override(mock_db):
             "name": "Ali Khan",
             "email": "ali@example.com",
             "subject": "Support",
-            "message": "I need help with my portfolio.",
+            "message": "Need help with portfolio.",
             "status": "new",
             "created_at": "2026-09-19T10:00:00Z",
         }
     ]
+
+    resp = client.get(
+        f"/api/v1/contact/messages/{FAKE_MESSAGE_ID}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == FAKE_MESSAGE_ID
+    assert data["subject"] == "Support"
+
+
+@patch("app.services.contact.get_admin_client")
+@patch("app.core.auth.get_admin_client")
+def test_admin_can_patch_status(mock_auth, mock_db):
+    """Admin user can update message review status."""
+    mock_auth.return_value.auth.get_user.return_value = _mock_user(
+        app_metadata={"role": "admin"}
+    )
+    mock_client = mock_db.return_value
+    # Select for existence check
+    mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {
+            "id": FAKE_MESSAGE_ID,
+            "name": "Ali Khan",
+            "email": "ali@example.com",
+            "subject": "Support",
+            "message": "Need help with portfolio.",
+            "status": "new",
+            "created_at": "2026-09-19T10:00:00Z",
+        }
+    ]
+    # Update call
     mock_client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = [
         {
             "id": FAKE_MESSAGE_ID,
             "name": "Ali Khan",
             "email": "ali@example.com",
             "subject": "Support",
-            "message": "I need help with my portfolio.",
+            "message": "Need help with portfolio.",
             "status": "read",
             "created_at": "2026-09-19T10:00:00Z",
         }
     ]
 
-    # Temporarily override admin dependency for this test
-    app.dependency_overrides[require_admin_user] = lambda: AuthenticatedUser(
-        id=uuid.UUID(FAKE_USER_ID), email="admin@zevqyn.com"
+    resp = client.patch(
+        f"/api/v1/contact/messages/{FAKE_MESSAGE_ID}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"status": "read"},
     )
 
-    try:
-        # 1. Invalid status rejected with 422
-        bad_resp = client.patch(
-            f"/api/v1/contact/messages/{FAKE_MESSAGE_ID}",
-            json={"status": "invalid_status"},
-        )
-        assert bad_resp.status_code == 422
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == FAKE_MESSAGE_ID
+    assert data["status"] == "read"
 
-        # 2. Valid status updated successfully
-        good_resp = client.patch(
-            f"/api/v1/contact/messages/{FAKE_MESSAGE_ID}",
-            json={"status": "read"},
-        )
-        assert good_resp.status_code == 200
-        assert good_resp.json()["status"] == "read"
-    finally:
-        app.dependency_overrides.pop(require_admin_user, None)
+
+@patch("app.core.auth.get_admin_client")
+def test_admin_patch_invalid_status_rejected(mock_auth):
+    """Invalid status values are rejected with 422."""
+    mock_auth.return_value.auth.get_user.return_value = _mock_user(
+        app_metadata={"role": "admin"}
+    )
+
+    resp = client.patch(
+        f"/api/v1/contact/messages/{FAKE_MESSAGE_ID}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"status": "deleted"},
+    )
+    assert resp.status_code == 422
+
+
+# ==============================================================================
+# 5. STATUS VALIDATION MODEL TESTS
+# ==============================================================================
+def test_status_update_model_validation():
+    """Verify ContactStatusUpdate accepts only allowed status values."""
+    for s in ["new", "read", "replied", "archived"]:
+        m = ContactStatusUpdate(status=s)
+        assert m.status == s
+
+    with pytest.raises(ValidationError):
+        ContactStatusUpdate(status="deleted")
+
+    with pytest.raises(ValidationError):
+        ContactStatusUpdate(status="pending")

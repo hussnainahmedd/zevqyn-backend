@@ -173,3 +173,50 @@ class TestSupabaseConfigFailure:
         assert r.status_code == 503
         assert "not configured" not in r.json().get("detail", "").lower() or \
                "authentication service" in r.json().get("detail", "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Admin authorization dependency (require_admin_user)
+# ---------------------------------------------------------------------------
+from app.core.auth import require_admin_user, AuthenticatedUser
+from fastapi import HTTPException
+
+
+class TestRequireAdminUser:
+    """require_admin_user must strictly verify app_metadata.role == 'admin'."""
+
+    @pytest.mark.anyio
+    async def test_admin_user_authorized(self):
+        user = AuthenticatedUser(
+            id=UUID(FAKE_UUID),
+            email=FAKE_EMAIL,
+            app_metadata={"role": "admin"},
+        )
+        res = await require_admin_user(user)
+        assert res.id == user.id
+        assert res.app_metadata.get("role") == "admin"
+
+    @pytest.mark.anyio
+    async def test_normal_user_denied_with_403(self):
+        user = AuthenticatedUser(
+            id=UUID(FAKE_UUID),
+            email=FAKE_EMAIL,
+            app_metadata={"role": "user"},
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await require_admin_user(user)
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "Admin access required"
+
+    @pytest.mark.anyio
+    async def test_empty_app_metadata_denied_with_403(self):
+        user = AuthenticatedUser(
+            id=UUID(FAKE_UUID),
+            email=FAKE_EMAIL,
+            app_metadata={},
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await require_admin_user(user)
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "Admin access required"
+

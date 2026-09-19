@@ -17,11 +17,12 @@ Security
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.supabase import SupabaseConfigError, get_admin_client
 
@@ -45,10 +46,11 @@ class AuthenticatedUser(BaseModel):
 
     id: UUID
     email: str | None = None
+    app_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
-# Dependency
+# Dependencies
 # ---------------------------------------------------------------------------
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
@@ -87,7 +89,30 @@ async def get_current_user(
         )
 
     user = response.user
+    raw_app_meta = getattr(user, "app_metadata", None)
+    app_metadata = raw_app_meta if isinstance(raw_app_meta, dict) else {}
+
     return AuthenticatedUser(
         id=UUID(user.id),
         email=user.email,
+        app_metadata=app_metadata,
     )
+
+
+async def require_admin_user(
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> AuthenticatedUser:
+    """FastAPI dependency — verify that the authenticated user has admin privileges.
+
+    Enforces that the user's verified Supabase app_metadata has role == 'admin'.
+    Unauthenticated requests yield 401 (via get_current_user).
+    Authenticated non-admin requests yield 403.
+    """
+    role = user.app_metadata.get("role") if isinstance(user.app_metadata, dict) else None
+    if role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return user
+

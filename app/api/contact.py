@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 
-from app.core.auth import AuthenticatedUser, get_current_user
+from app.core.auth import AuthenticatedUser, require_admin_user
 from app.models.contact import (
     ContactMessageCreate,
     ContactMessageResponse,
@@ -16,26 +16,6 @@ from app.models.contact import (
 from app.services import contact as contact_service
 
 router = APIRouter(prefix="/api/v1/contact", tags=["contact"])
-
-
-async def require_admin_user(
-    user: AuthenticatedUser = Depends(get_current_user),
-) -> AuthenticatedUser:
-    """FastAPI dependency to verify administrative privileges for contact message management.
-
-    SECURITY NOTE:
-    ZEVQYN currently lacks an admin-role / RBAC model on users and profiles.
-    Allowing any authenticated student/user to inspect or modify contact messages would
-    compromise customer privacy and data isolation.
-
-    Therefore, access to contact management routes is safely disabled (HTTP 403)
-    until an admin authorization mechanism (e.g. Supabase user metadata role or
-    a dedicated role column on profiles) is implemented.
-    """
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Admin authorization is not configured. Access to contact messages is disabled.",
-    )
 
 
 # ==============================================================================
@@ -53,7 +33,7 @@ async def submit_contact_message(
 
 
 # ==============================================================================
-# 2. ADMIN INBOX MANAGEMENT (SAFELY DISABLED UNTIL ADMIN RBAC IS CONFIGURED)
+# 2. ADMIN INBOX MANAGEMENT (REQUIRES APP_METADATA.ROLE == 'ADMIN')
 # ==============================================================================
 @router.get("/messages", response_model=list[ContactMessageResponse])
 async def list_contact_messages(
