@@ -8,6 +8,7 @@ from app.api.projects import router as projects_router
 from app.api.career import router as career_router
 from app.api.resumes import router as resumes_router
 from app.api.portfolios import router as portfolios_router
+from app.api.profile import router as profile_router
 from app.core.config import settings
 
 app = FastAPI(
@@ -34,6 +35,7 @@ app.include_router(projects_router)
 app.include_router(career_router)
 app.include_router(resumes_router)
 app.include_router(portfolios_router)
+app.include_router(profile_router)
 
 
 @app.get("/")
