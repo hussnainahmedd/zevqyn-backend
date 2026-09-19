@@ -640,18 +640,12 @@ def export_resume_pdf(user_id: UUID, resume_id: UUID) -> Response:
                     pass
 
             item_desc = getattr(item, "description", None)
-            if item_desc:
+            if item_desc and not date_str:
                 parts = str(item_desc).split(" | ")
                 for p in parts:
-                    if p.startswith("Issued:") and not date_str:
+                    if p.startswith("Issued:"):
                         raw_d = p.replace("Issued:", "").strip()
                         date_str = _format_date(raw_d)
-                    elif p.startswith("ID:") and not cred_id:
-                        cred_id = p.replace("ID:", "").strip()
-                    elif p.lower().startswith("credential id:") and not cred_id:
-                        cred_id = p.split(":", 1)[1].strip()
-                    elif not desc_str:
-                        desc_str = p.strip()
 
             if pdf.h - pdf.b_margin - pdf.get_y() < 15:
                 pdf.add_page()
@@ -670,48 +664,10 @@ def export_resume_pdf(user_id: UUID, resume_id: UUID) -> Response:
             else:
                 pdf.ln(5)
 
-            detail_parts = []
-            if cred_id:
-                clean_cid = str(cred_id).strip()
-                if clean_cid.lower().startswith("credential id:"):
-                    clean_cid = clean_cid[len("credential id:"):].strip()
-                elif clean_cid.lower().startswith("id:"):
-                    clean_cid = clean_cid[len("id:"):].strip()
-                detail_parts.append(f"Credential ID: {clean_cid}")
-
-            if desc_str and str(desc_str).strip():
-                clean_desc = str(desc_str).strip()
-                if cred_id and clean_desc.lower() in (
-                    str(cred_id).lower(),
-                    f"id: {str(cred_id).lower()}",
-                    f"credential id: {str(cred_id).lower()}"
-                ):
-                    pass
-                elif not cred_id:
-                    if clean_desc.lower().startswith("credential id:"):
-                        val = clean_desc[len("credential id:"):].strip()
-                        detail_parts.append(f"Credential ID: {val}")
-                    elif clean_desc.lower().startswith("id:"):
-                        val = clean_desc[len("id:"):].strip()
-                        detail_parts.append(f"Credential ID: {val}")
-                    else:
-                        detail_parts.append(f"Credential ID: {clean_desc}")
-                else:
-                    detail_parts.append(clean_desc)
-
-            if detail_parts or cred_url:
+            if cred_url:
                 pdf.set_font("helvetica", "", 9)
-                pdf.set_text_color(60, 60, 60)
-                if detail_parts:
-                    pdf.write(4.5, _clean_text(" | ".join(detail_parts)))
-                if cred_url:
-                    if detail_parts:
-                        pdf.set_text_color(100, 100, 100)
-                        pdf.write(4.5, " | ")
-                    full_url = cred_url if cred_url.startswith(("http://", "https://")) else f"https://{cred_url}"
-                    pdf.set_text_color(0, 0, 0)
-                    pdf.write(4.5, "Verify Credential", link=full_url)
-                pdf.set_text_color(0, 0, 0)
+                full_url = cred_url if cred_url.startswith(("http://", "https://")) else f"https://{cred_url}"
+                pdf.write(4.5, "Verify Credential", link=full_url)
                 pdf.ln(4.5)
 
             pdf.ln(2.5)

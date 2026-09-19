@@ -680,7 +680,8 @@ def test_export_pdf_with_all_personal_info(mock_get_resume, mock_get_items, mock
     assert "LinkedIn" in pdf_text
     assert "GitHub" in pdf_text
     assert "Portfolio" in pdf_text
-    assert "Credential ID: GCP-998877" in pdf_text
+    assert "Credential ID" not in pdf_text
+    assert "GCP-998877" not in pdf_text
     assert "PROFESSIONAL SUMMARY" in pdf_text
     assert "Experienced full-stack engineer" in pdf_text
 
@@ -816,8 +817,8 @@ def test_export_pdf_skill_grouping_ignores_proficiency(mock_get_resume, mock_get
 @patch("app.services.resumes.get_admin_client")
 @patch("app.services.resumes.get_resume_items")
 @patch("app.services.resumes.get_resume")
-def test_export_pdf_certificate_raw_credential_id(mock_get_resume, mock_get_items, mock_db, mock_get_cert):
-    """Test Issue 2: certificate with description holding raw credential ID renders as 'Credential ID: <val>'."""
+def test_export_pdf_certificate_without_credential_id(mock_get_resume, mock_get_items, mock_db, mock_get_cert):
+    """Test: certificate rendering omits Credential ID and displays title, issuer, date, and link."""
     resume_id = uuid.uuid4()
 
     class ResumeObj:
@@ -871,12 +872,14 @@ def test_export_pdf_certificate_raw_credential_id(mock_get_resume, mock_get_item
     doc = pymupdf.open(stream=response.content, filetype="pdf")
     pdf_text = "".join(page.get_text() for page in doc)
 
-    # Must contain formatted label
-    assert "Credential ID: hbchbciqc" in pdf_text
+    # Title, issuer, and date must be present
+    assert "python programing - Coursera" in pdf_text
+    assert "Feb 2026" in pdf_text
     assert "Verify Credential" in pdf_text
-    # Raw token alone on a line without prefix must not appear
-    lines = [line.strip() for line in pdf_text.splitlines() if line.strip()]
-    assert "hbchbciqc" not in lines
+
+    # Credential ID and raw token must NOT appear in PDF text
+    assert "Credential ID" not in pdf_text
+    assert "hbchbciqc" not in pdf_text
 
 
 @patch("app.services.resumes.get_admin_client")
