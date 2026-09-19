@@ -128,7 +128,7 @@ def _extract_txt(content: bytes) -> list[ExtractedUnit]:
 
 def _extract_document_bytes(content: bytes, file_type: str) -> list[ExtractedUnit]:
     """Route extraction to the correct parser based on file type."""
-    ft = file_type.lower()
+    ft = file_type.lower().lstrip(".")
     if ft == "pdf":
         return _extract_pdf(content)
     elif ft == "docx":
