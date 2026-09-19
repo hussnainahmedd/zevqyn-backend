@@ -26,6 +26,12 @@ def setup_auth():
         yield mock_get
 
 
+@pytest.fixture(autouse=True)
+def mock_sleep():
+    with patch("app.services.career_ai.time.sleep") as mock_s:
+        yield mock_s
+
+
 # ==============================================================================
 # AUTHENTICATION ENFORCEMENT
 # ==============================================================================
@@ -859,4 +865,166 @@ def test_delete_career_conversation_ownership_protection(mock_db):
         headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
     )
     assert resp.status_code == 404
+
+
+# ==============================================================================
+# J. TRANSIENT GEMINI ERROR RETRY TESTS
+# ==============================================================================
+@patch("app.services.career_ai._get_genai_client")
+def test_gemini_503_retry_then_success(mock_ai, mock_sleep):
+    from google.genai import errors
+
+    mock_gemini_503 = errors.APIError(503, "This model is currently experiencing high demand. Please try again later.")
+
+    mock_success_res = MagicMock()
+    mock_success_res.text = json.dumps({
+        "summary": "3-month roadmap.",
+        "days_30": [{"title": "Foundation", "description": "Learn fundamentals", "category": "Skills", "priority": "High"}],
+        "days_60": [{"title": "Projects", "description": "Build apps", "category": "Projects", "priority": "High"}],
+        "days_90": [{"title": "Interviews", "description": "Apply", "category": "Resume", "priority": "Medium"}],
+    })
+
+    # First attempt fails with 503, second attempt succeeds
+    mock_ai.return_value.models.generate_content.side_effect = [mock_gemini_503, mock_success_res]
+
+    resp = client.post(
+        "/api/v1/career/ai/action-plan",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"target_role": "Backend Engineer"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["target_role"] == "Backend Engineer"
+    assert mock_ai.return_value.models.generate_content.call_count == 2
+    assert mock_sleep.call_count == 1
+    mock_sleep.assert_called_with(1.0)
+
+
+@patch("app.services.career_ai._get_genai_client")
+def test_gemini_503_repeated_exhausts_retries(mock_ai, mock_sleep):
+    from google.genai import errors
+    from unittest.mock import call
+
+    mock_gemini_503 = errors.APIError(503, "This model is currently experiencing high demand.")
+    mock_ai.return_value.models.generate_content.side_effect = mock_gemini_503
+
+    resp = client.post(
+        "/api/v1/career/ai/action-plan",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"target_role": "Backend Engineer"},
+    )
+
+    assert resp.status_code == 502
+    assert "AI generation service temporarily unavailable" in resp.json()["detail"]
+    # Initial attempt + 2 retries = 3 attempts total
+    assert mock_ai.return_value.models.generate_content.call_count == 3
+    assert mock_sleep.call_count == 2
+    assert mock_sleep.call_args_list == [call(1.0), call(2.0)]
+
+
+@patch("app.services.career_ai._get_genai_client")
+def test_gemini_429_retry_then_success(mock_ai, mock_sleep):
+    from google.genai import errors
+
+    mock_gemini_429 = errors.ClientError(429, "Resource has been exhausted (e.g. check quota).")
+
+    mock_success_res = MagicMock()
+    mock_success_res.text = json.dumps({
+        "summary": "3-month roadmap.",
+        "days_30": [{"title": "Foundation", "description": "Learn fundamentals", "category": "Skills", "priority": "High"}],
+        "days_60": [{"title": "Projects", "description": "Build apps", "category": "Projects", "priority": "High"}],
+        "days_90": [{"title": "Interviews", "description": "Apply", "category": "Resume", "priority": "Medium"}],
+    })
+
+    mock_ai.return_value.models.generate_content.side_effect = [mock_gemini_429, mock_success_res]
+
+    resp = client.post(
+        "/api/v1/career/ai/action-plan",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"target_role": "Backend Engineer"},
+    )
+
+    assert resp.status_code == 200
+    assert mock_ai.return_value.models.generate_content.call_count == 2
+    assert mock_sleep.call_count == 1
+    mock_sleep.assert_called_with(1.0)
+
+
+@patch("app.services.career_ai._get_genai_client")
+def test_gemini_non_transient_failure_no_unnecessary_retries(mock_ai, mock_sleep):
+    from google.genai import errors
+
+    mock_non_transient = errors.ClientError(400, "INVALID_ARGUMENT: The request is invalid.")
+    mock_ai.return_value.models.generate_content.side_effect = mock_non_transient
+
+    resp = client.post(
+        "/api/v1/career/ai/action-plan",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"target_role": "Backend Engineer"},
+    )
+
+    assert resp.status_code == 502
+    # Non-transient errors must NOT be retried: call_count must be 1, mock_sleep must be 0
+    assert mock_ai.return_value.models.generate_content.call_count == 1
+    assert mock_sleep.call_count == 0
+
+
+@patch("app.services.career_ai.get_full_career_context")
+@patch("app.services.career_ai._get_genai_client")
+@patch("app.services.career_ai.get_admin_client")
+def test_career_chat_503_retry_then_success(mock_db, mock_ai, mock_ctx, mock_sleep):
+    from google.genai import errors
+    from app.models.career_ai import CareerProfileStats
+    mock_ctx.return_value = ({}, CareerProfileStats())
+
+    mock_client = mock_db.return_value
+    mock_client.table.return_value.insert.return_value.execute.return_value.data = [{"id": str(uuid.uuid4())}]
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value.data = []
+
+    mock_gemini_503 = errors.APIError(503, "UNAVAILABLE: high demand")
+    mock_chat_res = MagicMock()
+    mock_chat_res.text = "Here is my advice after retry."
+
+    mock_ai.return_value.models.generate_content.side_effect = [mock_gemini_503, mock_chat_res]
+
+    resp = client.post(
+        "/api/v1/career/ai/chat",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"message": "What should I do?"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["answer"] == "Here is my advice after retry."
+    assert mock_ai.return_value.models.generate_content.call_count == 2
+    assert mock_sleep.call_count == 1
+    mock_sleep.assert_called_with(1.0)
+
+
+@patch("app.services.career_ai.get_full_career_context")
+@patch("app.services.career_ai._get_genai_client")
+@patch("app.services.career_ai.get_admin_client")
+def test_career_chat_repeated_503_exhausts_retries(mock_db, mock_ai, mock_ctx, mock_sleep):
+    from google.genai import errors
+    from unittest.mock import call
+    from app.models.career_ai import CareerProfileStats
+    mock_ctx.return_value = ({}, CareerProfileStats())
+
+    mock_client = mock_db.return_value
+    mock_client.table.return_value.insert.return_value.execute.return_value.data = [{"id": str(uuid.uuid4())}]
+    mock_client.table.return_value.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value.data = []
+
+    mock_gemini_503 = errors.APIError(503, "UNAVAILABLE: high demand")
+    mock_ai.return_value.models.generate_content.side_effect = mock_gemini_503
+
+    resp = client.post(
+        "/api/v1/career/ai/chat",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"message": "What should I do?"},
+    )
+
+    assert resp.status_code == 502
+    assert mock_ai.return_value.models.generate_content.call_count == 3
+    assert mock_sleep.call_count == 2
+    assert mock_sleep.call_args_list == [call(1.0), call(2.0)]
+
 

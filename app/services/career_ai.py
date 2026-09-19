@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
-from typing import Any, TypeVar
+import logging
+import time
+from typing import Any, Callable, TypeVar
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from google.genai import types
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.core.supabase import get_admin_client
@@ -204,6 +208,116 @@ def get_full_career_context(user_id: UUID) -> tuple[dict[str, Any], CareerProfil
     return context, stats
 
 
+# ==============================================================================
+# RETRY CONFIGURATION & ERROR CLASSIFICATION FOR GEMINI GENERATION
+# ==============================================================================
+MAX_GENAI_RETRIES = 2
+INITIAL_RETRY_BACKOFF_SECONDS = 1.0
+
+
+def _is_transient_genai_error(exc: Exception) -> bool:
+    """Determine whether an upstream Gemini/GenAI error is transient and safe to retry.
+
+    Retries:
+    - 503 / UNAVAILABLE ("model experiencing high demand", "overloaded", etc.)
+    - 429 / RESOURCE_EXHAUSTED (rate limits / temporary quota delays)
+    - 502 / BAD_GATEWAY, 504 / DEADLINE_EXCEEDED (upstream gateway timeouts)
+    - Transient socket/connection reset or timeout errors
+
+    Does NOT retry:
+    - 400 / INVALID_ARGUMENT (validation/prompt format)
+    - 401 / UNAUTHENTICATED (bad/missing credentials)
+    - 403 / PERMISSION_DENIED
+    - 404 / NOT_FOUND
+    - Parsing/schema/validation errors
+    """
+    # 1. HTTP-style status codes if present on exception object
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    if code in {400, 401, 403, 404}:
+        return False
+    if code in {429, 502, 503, 504}:
+        return True
+
+    # 2. Canonical status strings (e.g. from google.genai.errors.APIError)
+    status_str = getattr(exc, "status", None)
+    if status_str in {"UNAVAILABLE", "RESOURCE_EXHAUSTED", "DEADLINE_EXCEEDED"}:
+        return True
+    if status_str in {"INVALID_ARGUMENT", "PERMISSION_DENIED", "NOT_FOUND", "UNAUTHENTICATED"}:
+        return False
+
+    # 3. String-based matching on sanitized exception message
+    msg = str(exc).lower()
+    # Explicit non-transient markers
+    if any(k in msg for k in ["invalid_argument", "permission_denied", "unauthenticated", "not_found", "unauthorized"]):
+        return False
+    # Transient markers
+    if any(k in msg for k in ["503", "unavailable", "high demand", "overloaded", "temporarily unavailable"]):
+        return True
+    if any(k in msg for k in ["429", "resource_exhausted", "rate limit", "quota"]):
+        return True
+    if any(k in msg for k in ["502", "504", "deadline exceeded", "timeout", "timed out"]):
+        return True
+    if any(k in msg for k in ["connection reset", "server disconnected", "remotedisconnected", "connection error"]):
+        return True
+
+    return False
+
+
+def _call_genai_with_retry(
+    call_fn: Callable[[], Any],
+    operation_name: str = "Gemini generation",
+    max_retries: int = MAX_GENAI_RETRIES,
+    base_backoff: float = INITIAL_RETRY_BACKOFF_SECONDS,
+) -> Any:
+    """Invoke a GenAI operation with bounded exponential backoff for transient errors.
+
+    Retries at most max_retries times (initial + 2 retries = 3 attempts total).
+    Backoff sequence: ~1.0s, ~2.0s.
+    Only transient errors (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED, timeouts) are retried.
+    Non-transient errors fail immediately without retry.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return call_fn()
+        except Exception as exc:
+            last_exc = exc
+            if not _is_transient_genai_error(exc):
+                # Non-transient error: do not retry
+                logger.warning(
+                    "Non-transient GenAI error encountered during %s on attempt %d/%d: %s. Not retrying.",
+                    operation_name,
+                    attempt + 1,
+                    max_retries + 1,
+                    type(exc).__name__,
+                )
+                raise
+
+            if attempt < max_retries:
+                backoff = base_backoff * (2 ** attempt)
+                logger.warning(
+                    "Transient GenAI error encountered during %s (attempt %d/%d): %s. Retrying in %.1fs...",
+                    operation_name,
+                    attempt + 1,
+                    max_retries + 1,
+                    type(exc).__name__,
+                    backoff,
+                )
+                time.sleep(backoff)
+            else:
+                logger.error(
+                    "Exhausted all %d attempts for %s due to persistent transient GenAI error: %s",
+                    max_retries + 1,
+                    operation_name,
+                    type(exc).__name__,
+                )
+
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="AI generation service temporarily unavailable",
+    )
+
+
 def _generate_structured_ai(
     system_instruction: str,
     prompt: str,
@@ -219,12 +333,17 @@ def _generate_structured_ai(
         response_schema=response_schema,
     )
 
-    try:
-        response = ai_client.models.generate_content(
+    def _call():
+        return ai_client.models.generate_content(
             model=settings.GEMINI_GENERATION_MODEL,
             contents=prompt,
             config=config,
         )
+
+    try:
+        response = _call_genai_with_retry(_call, operation_name="structured_ai_generation")
+    except HTTPException:
+        raise
     except Exception as e:
         print("CAREER AI GENERATION ERROR:", repr(e), flush=True)
         raise HTTPException(
@@ -788,12 +907,17 @@ def process_career_chat(user_id: UUID, request: CareerChatRequest) -> CareerChat
         temperature=0.4,
     )
 
-    try:
-        response = ai_client.models.generate_content(
+    def _call():
+        return ai_client.models.generate_content(
             model=settings.GEMINI_GENERATION_MODEL,
             contents=sanitized_contents,
             config=config,
         )
+
+    try:
+        response = _call_genai_with_retry(_call, operation_name="career_chat_generation")
+    except HTTPException:
+        raise
     except Exception as e:
         print("CAREER AI CHAT GENERATION ERROR:", repr(e), flush=True)
         raise HTTPException(
