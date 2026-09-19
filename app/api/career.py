@@ -3,6 +3,8 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends
 
+from typing import Optional
+
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.models.career import (
     SkillCreate, SkillUpdate, SkillResponse,
@@ -10,7 +12,21 @@ from app.models.career import (
     CertificateCreate, CertificateUpdate, CertificateResponse,
     CareerAssistantRequest, CareerAssistantResponse
 )
+from app.models.career_ai import (
+    CareerAnalysisResponse,
+    SkillGapRequest,
+    SkillGapResponse,
+    ProjectSuggestionsRequest,
+    ProjectSuggestionsResponse,
+    ResumeReviewRequest,
+    ResumeReviewResponse,
+    PortfolioReviewRequest,
+    PortfolioReviewResponse,
+    ActionPlanRequest,
+    ActionPlanResponse,
+)
 from app.services import career as career_service
+from app.services import career_ai as career_ai_service
 
 router = APIRouter(prefix="/api/v1/career", tags=["career"])
 
@@ -93,3 +109,59 @@ async def delete_certificate(cert_id: UUID, user: AuthenticatedUser = Depends(ge
 async def ask_career_assistant(request: CareerAssistantRequest, user: AuthenticatedUser = Depends(get_current_user)):
     """Ask the career AI a grounded question about the user profile."""
     return career_service.ask_career_assistant(user.id, request.message)
+
+
+# ==============================================================================
+# CAREER AI (PHASE 1)
+# ==============================================================================
+@router.post("/ai/analyze", response_model=CareerAnalysisResponse)
+async def analyze_career(user: AuthenticatedUser = Depends(get_current_user)):
+    """Analyze the authenticated user's complete career profile and readiness."""
+    return career_ai_service.analyze_career_profile(user.id)
+
+
+@router.post("/ai/skill-gap", response_model=SkillGapResponse)
+async def skill_gap_analysis(
+    request: SkillGapRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Analyze skill gaps against a specified target role."""
+    return career_ai_service.analyze_skill_gap(user.id, request)
+
+
+@router.post("/ai/suggest-projects", response_model=ProjectSuggestionsResponse)
+async def suggest_career_projects(
+    request: Optional[ProjectSuggestionsRequest] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Recommend personalized portfolio project ideas bridging skill gaps."""
+    req = request or ProjectSuggestionsRequest()
+    return career_ai_service.suggest_projects(user.id, req)
+
+
+@router.post("/ai/review-resume", response_model=ResumeReviewResponse)
+async def review_user_resume(
+    request: ResumeReviewRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Evaluate a user's resume for content, impact, and ATS optimization."""
+    return career_ai_service.review_resume(user.id, request)
+
+
+@router.post("/ai/review-portfolio", response_model=PortfolioReviewResponse)
+async def review_user_portfolio(
+    request: PortfolioReviewRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Review a user's portfolio showcase, headline, and attached items."""
+    return career_ai_service.review_portfolio(user.id, request)
+
+
+@router.post("/ai/action-plan", response_model=ActionPlanResponse)
+async def career_action_plan(
+    request: ActionPlanRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Generate a structured 30/60/90-day career roadmap towards target role."""
+    return career_ai_service.generate_action_plan(user.id, request)
+
