@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional, Any
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, date
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -88,6 +88,57 @@ class PortfolioProjectResponse(BaseModel):
 
 
 # ==============================================================================
+# PORTFOLIO SKILLS
+# ==============================================================================
+class PortfolioSkillCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    skill_id: UUID
+    sort_order: Optional[int] = Field(0)
+
+
+class PortfolioSkillResponse(BaseModel):
+    id: UUID
+    portfolio_id: UUID
+    skill_id: UUID
+    sort_order: int
+    created_at: datetime
+
+
+# ==============================================================================
+# PORTFOLIO EDUCATION
+# ==============================================================================
+class PortfolioEducationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    education_id: UUID
+    sort_order: Optional[int] = Field(0)
+
+
+class PortfolioEducationResponse(BaseModel):
+    id: UUID
+    portfolio_id: UUID
+    education_id: UUID
+    sort_order: int
+    created_at: datetime
+
+
+# ==============================================================================
+# PORTFOLIO CERTIFICATES
+# ==============================================================================
+class PortfolioCertificateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    certificate_id: UUID
+    sort_order: Optional[int] = Field(0)
+
+
+class PortfolioCertificateResponse(BaseModel):
+    id: UUID
+    portfolio_id: UUID
+    certificate_id: UUID
+    sort_order: int
+    created_at: datetime
+
+
+# ==============================================================================
 # PUBLIC SERIALIZATION
 # ==============================================================================
 class PublicPortfolioProject(BaseModel):
@@ -99,6 +150,32 @@ class PublicPortfolioProject(BaseModel):
     github_url: Optional[str]
     live_url: Optional[str]
     image_url: Optional[str]
+
+
+class PublicPortfolioSkill(BaseModel):
+    name: str
+    category: str
+    proficiency: int
+
+
+class PublicPortfolioEducation(BaseModel):
+    institution: str
+    degree: str
+    field_of_study: str
+    start_date: date
+    end_date: Optional[date] = None
+    description: Optional[str] = None
+
+
+class PublicPortfolioCertificate(BaseModel):
+    title: str
+    issuer: str
+    issue_date: date
+    expiry_date: Optional[date] = None
+    credential_id: Optional[str] = None
+    credential_url: Optional[str] = None
+    description: Optional[str] = None
+
 
 class PublicPortfolioResponse(BaseModel):
     """Safely exposes only intended public information."""
@@ -112,5 +189,8 @@ class PublicPortfolioResponse(BaseModel):
     linkedin_url: Optional[str]
     website_url: Optional[str]
     
-    projects: list[PublicPortfolioProject]
+    projects: list[PublicPortfolioProject] = []
+    skills: list[PublicPortfolioSkill] = []
+    education: list[PublicPortfolioEducation] = []
+    certificates: list[PublicPortfolioCertificate] = []
     # No user UUID, email, or private career fields exposed by default.
