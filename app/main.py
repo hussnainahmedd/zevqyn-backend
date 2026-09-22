@@ -10,6 +10,7 @@ from app.api.resumes import router as resumes_router
 from app.api.portfolios import router as portfolios_router
 from app.api.profile import router as profile_router
 from app.api.contact import router as contact_router
+from app.api.documents import router as documents_router
 from app.core.config import settings
 
 app = FastAPI(
@@ -31,6 +32,7 @@ app.add_middleware(
 # ── Routers ──────────────────────────────────────────────────────────────
 app.include_router(v1_router)
 app.include_router(workspaces_router)
+app.include_router(documents_router)
 app.include_router(research_router)
 app.include_router(projects_router)
 app.include_router(career_router)
