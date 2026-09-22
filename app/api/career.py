@@ -107,11 +107,19 @@ async def delete_certificate(cert_id: UUID, user: AuthenticatedUser = Depends(ge
 
 
 # ==============================================================================
-# CAREER AI ASSISTANT
+# CAREER AI ASSISTANT (DEPRECATED)
 # ==============================================================================
-@router.post("/assistant", response_model=CareerAssistantResponse)
+@router.post(
+    "/assistant",
+    response_model=CareerAssistantResponse,
+    deprecated=True,
+    description=(
+        "DEPRECATED: Single-turn unpersisted assistant. "
+        "New integrations should use persistent multi-turn chat at POST /api/v1/career/ai/chat."
+    ),
+)
 async def ask_career_assistant(request: CareerAssistantRequest, user: AuthenticatedUser = Depends(get_current_user)):
-    """Ask the career AI a grounded question about the user profile."""
+    """Ask the career AI a grounded question about the user profile (Deprecated in V1.1)."""
     return career_service.ask_career_assistant(user.id, request.message)
 
 

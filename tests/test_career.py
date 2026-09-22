@@ -166,3 +166,31 @@ def test_career_assistant_with_profile(mock_ai, mock_certs, mock_edu, mock_skill
     data = response.json()
     assert data["answer"] == "Based on your Python skill..."
     assert data["profile_used"]["skills"] == 1
+
+
+def test_career_assistant_openapi_deprecated():
+    """Verify that /api/v1/career/assistant is marked as deprecated in OpenAPI schema."""
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    schema = response.json()
+    paths = schema.get("paths", {})
+
+    # Check legacy assistant is deprecated
+    assert "/api/v1/career/assistant" in paths
+    assistant_op = paths["/api/v1/career/assistant"]["post"]
+    assert assistant_op.get("deprecated") is True
+    assert "DEPRECATED" in assistant_op.get("description", "")
+    assert "/api/v1/career/ai/chat" in assistant_op.get("description", "")
+
+    # Check new V1.1 routes exist
+    assert "/api/v1/resumes/{resume_id}/items/reorder" in paths
+    assert "patch" in paths["/api/v1/resumes/{resume_id}/items/reorder"]
+
+    assert "/api/v1/resumes/{resume_id}/items/{item_id}" in paths
+    assert "patch" in paths["/api/v1/resumes/{resume_id}/items/{item_id}"]
+
+    assert "/api/v1/workspaces/{workspace_id}/conversations/{conversation_id}" in paths
+    assert "delete" in paths["/api/v1/workspaces/{workspace_id}/conversations/{conversation_id}"]
+
+    assert "/api/v1/documents" in paths
+    assert "get" in paths["/api/v1/documents"]
