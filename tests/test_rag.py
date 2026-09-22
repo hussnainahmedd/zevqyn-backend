@@ -156,3 +156,116 @@ def test_list_conversations(mock_ws_db, mock_db):
     data = response.json()
     assert len(data) == 1
     assert data[0]["id"] == FAKE_CONV_ID
+
+
+# ==============================================================================
+# V1.1 TESTS: RESEARCH CONVERSATION DELETION
+# ==============================================================================
+def _make_mock_ws():
+    return [{
+        "id": FAKE_WORKSPACE_ID,
+        "user_id": FAKE_USER_ID,
+        "name": "Test Workspace",
+        "description": "Desc",
+        "created_at": "2026-01-01T00:00:00",
+        "updated_at": "2026-01-01T00:00:00"
+    }]
+
+
+@patch("app.services.rag.get_admin_client")
+@patch("app.services.workspaces.get_admin_client")
+def test_delete_research_conversation_success(mock_ws_db, mock_db):
+    """Test successful research conversation and message deletion."""
+    mock_ws_res = MagicMock()
+    mock_ws_res.data = _make_mock_ws()
+    mock_ws_db.return_value.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = mock_ws_res
+
+    # Mock get_conversation
+    mock_conv = MagicMock()
+    mock_conv.data = [{
+        "id": FAKE_CONV_ID,
+        "user_id": FAKE_USER_ID,
+        "workspace_id": FAKE_WORKSPACE_ID,
+        "assistant_type": "research",
+        "title": "Research Conv",
+    }]
+    mock_db.return_value.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value = mock_conv
+
+    # Mock delete executions
+    mock_del_res = MagicMock()
+    mock_del_res.data = []
+    mock_db.return_value.table.return_value.delete.return_value.eq.return_value.eq.return_value.execute.return_value = mock_del_res
+    mock_db.return_value.table.return_value.delete.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value = mock_del_res
+
+    response = client.delete(
+        f"/api/v1/workspaces/{FAKE_WORKSPACE_ID}/conversations/{FAKE_CONV_ID}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["id"] == FAKE_CONV_ID
+
+
+@patch("app.services.rag.get_admin_client")
+@patch("app.services.workspaces.get_admin_client")
+def test_delete_research_conversation_career_ai_rejected(mock_ws_db, mock_db):
+    """Test that a Career AI conversation cannot be deleted through Research route."""
+    mock_ws_res = MagicMock()
+    mock_ws_res.data = _make_mock_ws()
+    mock_ws_db.return_value.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = mock_ws_res
+
+    # Mock get_conversation returning career assistant_type
+    mock_conv = MagicMock()
+    mock_conv.data = [{
+        "id": FAKE_CONV_ID,
+        "user_id": FAKE_USER_ID,
+        "workspace_id": FAKE_WORKSPACE_ID,
+        "assistant_type": "career",
+        "title": "Career Conv",
+    }]
+    mock_db.return_value.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value = mock_conv
+
+    response = client.delete(
+        f"/api/v1/workspaces/{FAKE_WORKSPACE_ID}/conversations/{FAKE_CONV_ID}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 404
+    assert "not found or access denied" in response.json()["detail"].lower()
+
+
+@patch("app.services.rag.get_admin_client")
+@patch("app.services.workspaces.get_admin_client")
+def test_delete_research_conversation_not_found(mock_ws_db, mock_db):
+    """Test 404 when conversation does not exist."""
+    mock_ws_res = MagicMock()
+    mock_ws_res.data = _make_mock_ws()
+    mock_ws_db.return_value.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = mock_ws_res
+
+    mock_conv = MagicMock()
+    mock_conv.data = []
+    mock_db.return_value.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value = mock_conv
+
+    response = client.delete(
+        f"/api/v1/workspaces/{FAKE_WORKSPACE_ID}/conversations/{FAKE_CONV_ID}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 404
+
+
+@patch("app.services.workspaces.get_admin_client")
+def test_delete_research_conversation_wrong_workspace_or_user(mock_ws_db):
+    """Test 404 when workspace is not owned by the user."""
+    mock_ws_res = MagicMock()
+    mock_ws_res.data = []  # Not owned
+    mock_ws_db.return_value.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = mock_ws_res
+
+    response = client.delete(
+        f"/api/v1/workspaces/{uuid.uuid4()}/conversations/{FAKE_CONV_ID}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 404

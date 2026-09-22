@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -44,6 +45,29 @@ def create_conversation(user_id: UUID, workspace_id: UUID, title: str) -> dict:
             detail="Failed to create conversation"
         )
     return res.data[0]
+
+
+def delete_conversation(user_id: UUID, workspace_id: UUID, conversation_id: UUID) -> dict[str, Any]:
+    """Verify ownership, workspace affiliation, and research assistant type, then delete messages and conversation."""
+    conv = get_conversation(user_id, workspace_id, conversation_id)
+    if conv.get("assistant_type") != "research":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found or access denied",
+        )
+    client = get_admin_client()
+    try:
+        client.table("messages").delete().eq("conversation_id", str(conversation_id)).eq("user_id", str(user_id)).execute()
+        client.table("conversations").delete().eq("id", str(conversation_id)).eq("user_id", str(user_id)).eq("workspace_id", str(workspace_id)).execute()
+        return {"status": "success", "id": str(conversation_id)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("DELETE RESEARCH CONVERSATION ERROR:", repr(e), flush=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete conversation",
+        )
 
 
 def resolve_document_names(user_id: UUID, workspace_id: UUID, chunks: list[RetrievedChunk]) -> dict[UUID, str]:
