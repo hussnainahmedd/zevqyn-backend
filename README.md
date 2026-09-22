@@ -265,10 +265,18 @@ ZEVQYN allows you to seamlessly transition from unstructured research into a str
 
 Standard Project CRUD (`/api/v1/projects`) enforces strictly authenticated ownership and supports defining `technologies`, `skills`, `visibility`, and `source_document_id`.
 
-### Resumes & PDF Export (Phase 9)
+### Global Documents & Workspaces (V1.1)
+
+* `GET /api/v1/documents` — Global cross-workspace document listing with filters (`workspace_id`, `file_type`, `status`, `search`) and pagination (`limit`, `offset`), sorted newest first.
+* `DELETE /api/v1/workspaces/{workspace_id}/conversations/{conversation_id}` — Securely delete a research conversation and its messages.
+
+### Resumes & PDF Export (Phase 9 + V1.1)
 
 ZEVQYN includes a secure Resume Builder and PDF generation pipeline (`/api/v1/resumes`).
 * **Trusted Items**: Instead of arbitrary text entry, you attach your actual stored projects, skills, education, and certificates as `resume_items`.
+* **Item Reordering (V1.1)**:
+  * `PATCH /api/v1/resumes/{resume_id}/items/{item_id}` — Update `sort_order` for an individual resume item.
+  * `PATCH /api/v1/resumes/{resume_id}/items/reorder` — Bulk atomic reordering of resume items for drag-and-drop interfaces.
 * **PDF Export**: Generate a clean, ATS-friendly PDF directly from the backend (`GET /api/v1/resumes/{id}/pdf`) using the lightweight `fpdf2` engine (fully compatible with serverless/container deployments). No Chromium or headless browser dependencies required.
 
 ### Portfolios & Public Access (Phase 9)
@@ -278,13 +286,10 @@ ZEVQYN allows you to curate your trusted records into a public-facing developer 
 * **Public/Private Security**: Portfolios natively support `is_published` visibility.
 * **Safe Public Serialization**: Anonymous visitors can query published portfolios via `GET /api/v1/public/portfolios/{slug}`. This endpoint uses strict Pydantic isolation (`PublicPortfolioResponse`) to ensure no underlying user IDs, email addresses, RAG chunks, or internal data fields ever leak to the public internet.
 
-### Career AI Assistant (Phase 8B)
+### Career AI Assistant (Phase 8B / Deprecated in V1.1)
 
-ZEVQYN includes a secure, grounded Career AI Assistant (`POST /api/v1/career/assistant`).
-
-* **Profile Grounding**: The AI has strict access only to your authenticated Career Profile (Projects, Skills, Education, Certificates). It will **never** hallucinate or invent qualifications, jobs, or degrees you have not explicitly saved.
-* **General Guidance**: The AI can provide generic advice (e.g. "To become a backend engineer, you need...") but clearly separates this from your actual profile facts.
-* **Security First**: Your profile is stored securely via Standard Career CRUD endpoints (`/api/v1/career/skills`, etc.). No client-provided user IDs are accepted; everything is inferred natively from your signed Supabase JWT.
+* `POST /api/v1/career/assistant` — *(Deprecated)* Single-turn unpersisted assistant. Retained for backward compatibility.
+* **Recommended V1.1+ Alternative**: Use `POST /api/v1/career/ai/chat` for multi-turn persistent conversational Career Copilot, alongside the 6 specialized endpoints (`/ai/analyze`, `/ai/skill-gap`, `/ai/suggest-projects`, `/ai/review-resume`, `/ai/review-portfolio`, `/ai/action-plan`).
 
 ### File Upload Constraints
 
