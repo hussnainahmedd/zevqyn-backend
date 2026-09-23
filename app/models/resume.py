@@ -6,7 +6,7 @@ from typing import Optional, Any
 from uuid import UUID
 from datetime import datetime
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 # ==============================================================================
@@ -76,7 +76,26 @@ class ResumeItemCreate(BaseModel):
 
 class ResumeItemUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    sort_order: Optional[int] = Field(None)
+    sort_order: Optional[int] = Field(None, ge=0)
+
+
+class ResumeItemReorderEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: UUID
+    sort_order: int = Field(..., ge=0)
+
+
+class ResumeItemsReorderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[ResumeItemReorderEntry] = Field(..., min_length=1)
+
+    @field_validator("items")
+    @classmethod
+    def check_unique_ids(cls, v: list[ResumeItemReorderEntry]) -> list[ResumeItemReorderEntry]:
+        ids = [item.id for item in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate item IDs in reorder request")
+        return v
 
 
 class ResumeItemResponse(BaseModel):

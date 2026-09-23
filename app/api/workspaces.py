@@ -205,4 +205,15 @@ async def list_messages(
     return res.data
 
 
+@router.delete("/{workspace_id}/conversations/{conversation_id}")
+async def delete_conversation(
+    workspace_id: UUID,
+    conversation_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Delete a research conversation and its messages."""
+    workspace_service.get_workspace(user.id, workspace_id)
+    return rag_service.delete_conversation(user.id, workspace_id, conversation_id)
+
+
 

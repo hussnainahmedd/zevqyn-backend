@@ -164,3 +164,112 @@ def test_delete_document(setup_auth):
         
         # Storage removal should have been called
         mock_db.return_value.storage.from_.return_value.remove.assert_called_with(["user/ws/doc/test.txt"])
+
+
+# ==============================================================================
+# V1.1 TESTS: GLOBAL DOCUMENTS
+# ==============================================================================
+def _sample_doc_row(doc_id=None, ws_id=None, filename="document.pdf", file_type="pdf", status="uploaded"):
+    return {
+        "id": str(doc_id or uuid.uuid4()),
+        "user_id": FAKE_USER_ID,
+        "workspace_id": str(ws_id or uuid.uuid4()),
+        "original_filename": filename,
+        "file_type": file_type,
+        "file_size": 1024,
+        "status": status,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
+
+
+@patch("app.services.documents.get_admin_client")
+def test_list_global_documents_all(mock_db, setup_auth):
+    """Test retrieving all documents for the authenticated user."""
+    mock_client = mock_db.return_value
+    mock_res = MagicMock()
+    mock_res.data = [
+        _sample_doc_row(filename="doc1.pdf"),
+        _sample_doc_row(filename="doc2.docx", file_type="docx"),
+    ]
+
+    mock_query = MagicMock()
+    mock_client.table.return_value.select.return_value.eq.return_value = mock_query
+    mock_query.order.return_value.range.return_value.execute.return_value = mock_res
+
+    response = client.get(
+        "/api/v1/documents",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    assert data[0]["original_filename"] == "doc1.pdf"
+    assert data[1]["original_filename"] == "doc2.docx"
+
+
+@patch("app.services.documents.get_admin_client")
+def test_list_global_documents_empty(mock_db, setup_auth):
+    """Test retrieving documents when user has none."""
+    mock_client = mock_db.return_value
+    mock_res = MagicMock()
+    mock_res.data = []
+
+    mock_query = MagicMock()
+    mock_client.table.return_value.select.return_value.eq.return_value = mock_query
+    mock_query.order.return_value.range.return_value.execute.return_value = mock_res
+
+    response = client.get(
+        "/api/v1/documents",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_global_documents_unauthenticated():
+    """Test that listing documents requires authentication."""
+    response = client.get("/api/v1/documents")
+    assert response.status_code in (401, 403)
+
+
+@patch("app.services.documents.get_admin_client")
+def test_list_global_documents_filters(mock_db, setup_auth):
+    """Test applying workspace_id, file_type, status, and search filters."""
+    mock_client = mock_db.return_value
+    mock_res = MagicMock()
+    mock_res.data = [_sample_doc_row(filename="search_result.pdf", file_type="pdf", status="indexed")]
+
+    mock_query = MagicMock()
+    mock_client.table.return_value.select.return_value.eq.return_value = mock_query
+    mock_query.eq.return_value = mock_query
+    mock_query.ilike.return_value = mock_query
+    mock_query.order.return_value.range.return_value.execute.return_value = mock_res
+
+    target_ws = str(uuid.uuid4())
+    response = client.get(
+        f"/api/v1/documents?workspace_id={target_ws}&file_type=pdf&status=indexed&search=search_result&limit=10&offset=0",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["original_filename"] == "search_result.pdf"
+
+
+def test_list_global_documents_invalid_limit(setup_auth):
+    """Test validation rejection for invalid limit (<1 or >100)."""
+    resp_zero = client.get("/api/v1/documents?limit=0", headers={"Authorization": f"Bearer {FAKE_TOKEN}"})
+    assert resp_zero.status_code == 422
+
+    resp_too_high = client.get("/api/v1/documents?limit=101", headers={"Authorization": f"Bearer {FAKE_TOKEN}"})
+    assert resp_too_high.status_code == 422
+
+
+def test_list_global_documents_invalid_offset(setup_auth):
+    """Test validation rejection for negative offset."""
+    resp = client.get("/api/v1/documents?offset=-1", headers={"Authorization": f"Bearer {FAKE_TOKEN}"})
+    assert resp.status_code == 422

@@ -7,14 +7,15 @@ import re
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from fastapi.responses import Response
 from fpdf import FPDF
 
 from app.core.supabase import get_admin_client
 from app.models.resume import (
     ResumeCreate, ResumeUpdate, ResumeResponse,
-    ResumeItemCreate, ResumeItemUpdate, ResumeItemResponse
+    ResumeItemCreate, ResumeItemUpdate, ResumeItemResponse,
+    ResumeItemsReorderRequest
 )
 from app.services.projects import get_project
 from app.services.career import get_skill, get_education, get_certificate
@@ -159,6 +160,80 @@ def delete_resume_item(user_id: UUID, resume_id: UUID, item_id: UUID) -> dict:
         return {"status": "success"}
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to delete resume item")
+
+
+def update_resume_item(user_id: UUID, resume_id: UUID, item_id: UUID, item: ResumeItemUpdate) -> ResumeItemResponse:
+    """Update a single resume item (e.g. sort_order) after verifying resume and item ownership."""
+    get_resume(user_id, resume_id)
+    client = get_admin_client()
+
+    try:
+        item_res = client.table("resume_items").select("*").eq("id", str(item_id)).execute()
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch resume item")
+
+    if not item_res.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume item not found")
+
+    if item_res.data[0]["resume_id"] != str(resume_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item does not belong to this resume")
+
+    update_data = item.model_dump(exclude_unset=True)
+    if not update_data:
+        return ResumeItemResponse(**item_res.data[0])
+
+    try:
+        res = client.table("resume_items").update(update_data).eq("id", str(item_id)).eq("resume_id", str(resume_id)).execute()
+        if not res.data:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update resume item")
+        return ResumeItemResponse(**res.data[0])
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update resume item")
+
+
+def reorder_resume_items(user_id: UUID, resume_id: UUID, reorder_in: ResumeItemsReorderRequest) -> list[ResumeItemResponse]:
+    """Bulk update sort_order for resume items after validating all items belong to this resume."""
+    get_resume(user_id, resume_id)
+    client = get_admin_client()
+
+    # 1. Check for duplicate IDs in payload
+    supplied_ids = [str(entry.id) for entry in reorder_in.items]
+    if len(supplied_ids) != len(set(supplied_ids)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Duplicate item IDs in reorder request")
+
+    # 2. Fetch existing items for this resume
+    try:
+        existing_res = client.table("resume_items").select("id, resume_id").eq("resume_id", str(resume_id)).execute()
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch existing resume items")
+
+    existing_ids = {row["id"] for row in (existing_res.data or [])}
+
+    # 3. Validate every item before writing anything
+    for entry in reorder_in.items:
+        eid = str(entry.id)
+        if eid not in existing_ids:
+            # Check if it belongs to another resume
+            try:
+                other_res = client.table("resume_items").select("id, resume_id").eq("id", eid).execute()
+            except Exception:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to validate resume item")
+
+            if other_res.data:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Item {eid} belongs to another resume")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Resume item {eid} not found")
+
+    # 4. Perform updates
+    try:
+        for entry in reorder_in.items:
+            client.table("resume_items").update({"sort_order": entry.sort_order}).eq("id", str(entry.id)).eq("resume_id", str(resume_id)).execute()
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update resume item orders")
+
+    # 5. Return all items in effective sorted order
+    return get_resume_items(user_id, resume_id)
 
 
 # ==============================================================================

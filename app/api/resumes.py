@@ -7,7 +7,8 @@ from fastapi.responses import Response
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.models.resume import (
     ResumeCreate, ResumeUpdate, ResumeResponse,
-    ResumeItemCreate, ResumeItemUpdate, ResumeItemResponse
+    ResumeItemCreate, ResumeItemUpdate, ResumeItemResponse,
+    ResumeItemsReorderRequest
 )
 from app.services import resumes as resume_service
 
@@ -45,6 +46,25 @@ async def create_resume_item(resume_id: UUID, item: ResumeItemCreate, user: Auth
 @router.get("/{resume_id}/items", response_model=list[ResumeItemResponse])
 async def list_resume_items(resume_id: UUID, user: AuthenticatedUser = Depends(get_current_user)):
     return resume_service.get_resume_items(user.id, resume_id)
+
+@router.patch("/{resume_id}/items/reorder", response_model=list[ResumeItemResponse])
+async def reorder_resume_items(
+    resume_id: UUID,
+    reorder_in: ResumeItemsReorderRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Bulk update sort_order for resume items."""
+    return resume_service.reorder_resume_items(user.id, resume_id, reorder_in)
+
+@router.patch("/{resume_id}/items/{item_id}", response_model=ResumeItemResponse)
+async def update_resume_item(
+    resume_id: UUID,
+    item_id: UUID,
+    item: ResumeItemUpdate,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Update a single resume item's sort_order."""
+    return resume_service.update_resume_item(user.id, resume_id, item_id, item)
 
 @router.delete("/{resume_id}/items/{item_id}")
 async def delete_resume_item(resume_id: UUID, item_id: UUID, user: AuthenticatedUser = Depends(get_current_user)):

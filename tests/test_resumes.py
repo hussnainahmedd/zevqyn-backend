@@ -980,5 +980,306 @@ def test_export_pdf_profile_fallbacks_when_resume_fields_null(mock_get_resume, m
     assert "Portfolio" in pdf_text
 
 
+# ==============================================================================
+# V1.1 TESTS: RESUME ITEM REORDERING
+# ==============================================================================
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume")
+def test_update_resume_item_success(mock_get_resume, mock_db):
+    """Test successful single item sort_order update."""
+    resume_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    mock_get_resume.return_value = MagicMock(id=resume_id, user_id=FAKE_USER)
+
+    mock_client = mock_db.return_value
+    # Select existing item
+    mock_select = MagicMock()
+    mock_select.data = [{
+        "id": str(item_id),
+        "resume_id": str(resume_id),
+        "section_type": "project",
+        "title": "Project Alpha",
+        "subtitle": "Python",
+        "description": "Desc",
+        "metadata": {},
+        "sort_order": 0,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }]
+    mock_client.table().select().eq().execute.return_value = mock_select
+
+    # Update item
+    mock_update = MagicMock()
+    mock_update.data = [{
+        "id": str(item_id),
+        "resume_id": str(resume_id),
+        "section_type": "project",
+        "title": "Project Alpha",
+        "subtitle": "Python",
+        "description": "Desc",
+        "metadata": {},
+        "sort_order": 5,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }]
+    mock_client.table().update().eq().eq().execute.return_value = mock_update
+
+    response = client.patch(
+        f"/api/v1/resumes/{resume_id}/items/{item_id}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"sort_order": 5}
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["sort_order"] == 5
+    assert data["id"] == str(item_id)
+
+
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume")
+def test_update_resume_item_wrong_resume(mock_get_resume, mock_db):
+    """Test rejecting an item that belongs to a different resume."""
+    resume_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    other_resume_id = uuid.uuid4()
+    mock_get_resume.return_value = MagicMock(id=resume_id, user_id=FAKE_USER)
+
+    mock_client = mock_db.return_value
+    mock_select = MagicMock()
+    mock_select.data = [{
+        "id": str(item_id),
+        "resume_id": str(other_resume_id),
+        "section_type": "project",
+        "title": "Other Project",
+        "sort_order": 0,
+    }]
+    mock_client.table().select().eq().execute.return_value = mock_select
+
+    response = client.patch(
+        f"/api/v1/resumes/{resume_id}/items/{item_id}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"sort_order": 2}
+    )
+
+    assert response.status_code == 400
+    assert "Item does not belong to this resume" in response.json()["detail"]
+
+
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume")
+def test_update_resume_item_not_found(mock_get_resume, mock_db):
+    """Test 404 when resume item does not exist."""
+    resume_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    mock_get_resume.return_value = MagicMock(id=resume_id, user_id=FAKE_USER)
+
+    mock_client = mock_db.return_value
+    mock_select = MagicMock()
+    mock_select.data = []
+    mock_client.table().select().eq().execute.return_value = mock_select
+
+    response = client.patch(
+        f"/api/v1/resumes/{resume_id}/items/{item_id}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"sort_order": 1}
+    )
+
+    assert response.status_code == 404
+    assert "Resume item not found" in response.json()["detail"]
+
+
+@patch("app.services.resumes.get_admin_client")
+def test_update_resume_item_cross_user_rejected(mock_db):
+    """Test cross-user rejection when resume is not owned by current user."""
+    mock_client = mock_db.return_value
+    mock_res = MagicMock()
+    mock_res.data = []  # Not found or unowned
+    mock_client.table().select().eq().eq().execute.return_value = mock_res
+
+    response = client.patch(
+        f"/api/v1/resumes/{uuid.uuid4()}/items/{uuid.uuid4()}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"sort_order": 3}
+    )
+
+    assert response.status_code == 404
+
+
+def test_update_resume_item_negative_sort_order_rejected():
+    """Test validation rejection for negative sort_order."""
+    response = client.patch(
+        f"/api/v1/resumes/{uuid.uuid4()}/items/{uuid.uuid4()}",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json={"sort_order": -1}
+    )
+    assert response.status_code == 422
+
+
+@patch("app.services.resumes.get_resume_items")
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume")
+def test_reorder_resume_items_success(mock_get_resume, mock_db, mock_get_items):
+    """Test bulk reordering of resume items."""
+    resume_id = uuid.uuid4()
+    item1_id = uuid.uuid4()
+    item2_id = uuid.uuid4()
+    mock_get_resume.return_value = MagicMock(id=resume_id, user_id=FAKE_USER)
+
+    mock_client = mock_db.return_value
+    mock_existing = MagicMock()
+    mock_existing.data = [
+        {"id": str(item1_id), "resume_id": str(resume_id)},
+        {"id": str(item2_id), "resume_id": str(resume_id)},
+    ]
+    mock_client.table().select().eq().execute.return_value = mock_existing
+
+    # Mock return of get_resume_items
+    from app.models.resume import ResumeItemResponse
+    from datetime import datetime
+    now = datetime.now()
+    mock_get_items.return_value = [
+        ResumeItemResponse(
+            id=item2_id,
+            resume_id=resume_id,
+            section_type="skill",
+            title="Python",
+            sort_order=0,
+            created_at=now,
+            updated_at=now,
+        ),
+        ResumeItemResponse(
+            id=item1_id,
+            resume_id=resume_id,
+            section_type="skill",
+            title="FastAPI",
+            sort_order=1,
+            created_at=now,
+            updated_at=now,
+        ),
+    ]
+
+    payload = {
+        "items": [
+            {"id": str(item2_id), "sort_order": 0},
+            {"id": str(item1_id), "sort_order": 1},
+        ]
+    }
+
+    response = client.patch(
+        f"/api/v1/resumes/{resume_id}/items/reorder",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json=payload
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    assert data[0]["id"] == str(item2_id)
+    assert data[0]["sort_order"] == 0
+    assert data[1]["id"] == str(item1_id)
+    assert data[1]["sort_order"] == 1
+
+
+def test_reorder_resume_items_duplicate_ids_rejected():
+    """Test that duplicate item IDs in reorder payload are rejected."""
+    resume_id = uuid.uuid4()
+    same_id = str(uuid.uuid4())
+    payload = {
+        "items": [
+            {"id": same_id, "sort_order": 0},
+            {"id": same_id, "sort_order": 1},
+        ]
+    }
+
+    response = client.patch(
+        f"/api/v1/resumes/{resume_id}/items/reorder",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json=payload
+    )
+
+    assert response.status_code == 422
+
+
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume")
+def test_reorder_resume_items_item_from_another_resume_rejected(mock_get_resume, mock_db):
+    """Test rejecting bulk reorder if an item belongs to another resume."""
+    resume_id = uuid.uuid4()
+    item1_id = uuid.uuid4()
+    other_item_id = uuid.uuid4()
+    mock_get_resume.return_value = MagicMock(id=resume_id, user_id=FAKE_USER)
+
+    mock_client = mock_db.return_value
+    # Existing items on target resume only includes item1
+    mock_existing = MagicMock()
+    mock_existing.data = [{"id": str(item1_id), "resume_id": str(resume_id)}]
+
+    # Other item query finds it on another resume
+    mock_other = MagicMock()
+    mock_other.data = [{"id": str(other_item_id), "resume_id": str(uuid.uuid4())}]
+
+    def table_router(table_name):
+        mock_t = MagicMock()
+        mock_t.select.return_value.eq.return_value.execute.side_effect = [mock_existing, mock_other]
+        return mock_t
+
+    mock_client.table.side_effect = table_router
+
+    payload = {
+        "items": [
+            {"id": str(item1_id), "sort_order": 0},
+            {"id": str(other_item_id), "sort_order": 1},
+        ]
+    }
+
+    response = client.patch(
+        f"/api/v1/resumes/{resume_id}/items/reorder",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json=payload
+    )
+
+    assert response.status_code == 400
+    assert "belongs to another resume" in response.json()["detail"]
+
+
+@patch("app.services.resumes.get_admin_client")
+@patch("app.services.resumes.get_resume")
+def test_reorder_resume_items_unknown_item_rejected(mock_get_resume, mock_db):
+    """Test rejecting bulk reorder if an item ID does not exist."""
+    resume_id = uuid.uuid4()
+    unknown_item_id = uuid.uuid4()
+    mock_get_resume.return_value = MagicMock(id=resume_id, user_id=FAKE_USER)
+
+    mock_client = mock_db.return_value
+    mock_existing = MagicMock()
+    mock_existing.data = []
+
+    mock_other = MagicMock()
+    mock_other.data = []
+
+    def table_router(table_name):
+        mock_t = MagicMock()
+        mock_t.select.return_value.eq.return_value.execute.side_effect = [mock_existing, mock_other]
+        return mock_t
+
+    mock_client.table.side_effect = table_router
+
+    payload = {
+        "items": [
+            {"id": str(unknown_item_id), "sort_order": 0},
+        ]
+    }
+
+    response = client.patch(
+        f"/api/v1/resumes/{resume_id}/items/reorder",
+        headers={"Authorization": f"Bearer {FAKE_TOKEN}"},
+        json=payload
+    )
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"]
+
+
 
 

@@ -196,3 +196,49 @@ def generate_download_url(user_id: UUID, workspace_id: UUID, document_id: UUID) 
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate download URL",
         )
+
+
+def get_user_documents(
+    user_id: UUID,
+    workspace_id: UUID | None = None,
+    file_type: str | None = None,
+    status_filter: str | None = None,
+    search: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[DocumentResponse]:
+    """List documents owned by the user with optional filters and pagination."""
+    client = get_admin_client()
+    query = (
+        client.table("documents")
+        .select("*")
+        .eq("user_id", str(user_id))
+    )
+
+    if workspace_id is not None:
+        query = query.eq("workspace_id", str(workspace_id))
+
+    if file_type is not None and file_type.strip():
+        clean_ft = file_type.strip().lower().lstrip(".")
+        query = query.eq("file_type", clean_ft)
+
+    if status_filter is not None and status_filter.strip():
+        query = query.eq("status", status_filter.strip())
+
+    if search is not None and search.strip():
+        query = query.ilike("original_filename", f"%{search.strip()}%")
+
+    query = query.order("created_at", desc=True)
+
+    if limit > 0:
+        query = query.range(offset, offset + limit - 1)
+
+    try:
+        response = query.execute()
+        return [DocumentResponse(**d) for d in (response.data or [])]
+    except Exception as e:
+        print("GET USER DOCUMENTS ERROR:", repr(e), flush=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch documents",
+        )
