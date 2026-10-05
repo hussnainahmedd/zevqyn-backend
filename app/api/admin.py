@@ -106,6 +106,21 @@ def _auth_admin():
         ) from e
 
 
+def _public_error(e: Exception, fallback: str) -> str:
+    """Extract a safe, user-facing message from a Supabase/Auth error.
+
+    GoTrue errors carry a plain `.message` (e.g. "User already registered");
+    never leak raw tracebacks or keys.
+    """
+    msg = getattr(e, "message", None)
+    if isinstance(msg, str) and msg.strip():
+        return msg.strip()[:300]
+    text = str(e).strip()
+    if text and "object at 0x" not in text:
+        return text[:300]
+    return fallback
+
+
 # ---------------------------------------------------------------------------
 # 1. Admin auth
 # ---------------------------------------------------------------------------
@@ -178,7 +193,7 @@ async def create_user(data: AdminUserCreate, admin: str = Depends(get_admin_prin
         logger.error("Admin create_user failed: %r", e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Could not create user (email may already exist)",
+            detail=f"Could not create user: {_public_error(e, 'email may already exist')}",
         ) from e
     user = getattr(res, "user", None) or res
     return _summarize(user)
@@ -205,7 +220,8 @@ async def update_user(
     except Exception as e:
         logger.error("Admin update_user failed: %r", e)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Could not update user"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not update user: {_public_error(e, 'update rejected')}",
         ) from e
     user = getattr(res, "user", None) or res
     return _summarize(user)
@@ -219,7 +235,8 @@ async def delete_user(user_id: str, admin: str = Depends(get_admin_principal)):
     except Exception as e:
         logger.error("Admin delete_user failed: %r", e)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Could not delete user"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not delete user: {_public_error(e, 'delete rejected')}",
         ) from e
     return {"success": True}
 
