@@ -419,3 +419,35 @@ def test_status_update_model_validation():
 
     with pytest.raises(ValidationError):
         ContactStatusUpdate(status="pending")
+
+
+# ==============================================================================
+# 6. RATE LIMITING (security)
+# ==============================================================================
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """Isolate the in-memory rate limiter between tests."""
+    from app.core.rate_limit import limiter
+
+    storage = getattr(limiter, "_storage", None)
+    if storage is not None and hasattr(storage, "reset"):
+        storage.reset()
+    yield
+    if storage is not None and hasattr(storage, "reset"):
+        storage.reset()
+
+
+@patch("app.services.contact.get_admin_client")
+def test_contact_submit_rate_limited(mock_db):
+    """5 rapid public submissions succeed; the 6th is rejected with 429."""
+    mock_client = mock_db.return_value
+    mock_client.table.return_value.insert.return_value.execute.return_value.data = [
+        {"id": FAKE_MESSAGE_ID}
+    ]
+
+    statuses = [
+        client.post("/api/v1/contact", json=VALID_PAYLOAD).status_code
+        for _ in range(6)
+    ]
+    assert statuses[:5] == [200] * 5
+    assert statuses[5] == 429
