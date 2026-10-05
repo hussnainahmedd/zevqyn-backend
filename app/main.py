@@ -16,6 +16,7 @@ from app.api.portfolios import router as portfolios_router
 from app.api.profile import router as profile_router
 from app.api.contact import router as contact_router
 from app.api.documents import router as documents_router
+from app.api.uploads import router as uploads_router
 from app.api.admin import router as admin_router
 from app.core.admin_auth import ensure_seed_admin
 from app.core.config import settings
@@ -64,6 +65,7 @@ app.include_router(portfolios_router)
 app.include_router(profile_router)
 app.include_router(contact_router)
 app.include_router(admin_router)
+app.include_router(uploads_router)
 
 
 @app.get("/")
