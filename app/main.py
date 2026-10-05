@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -14,13 +16,24 @@ from app.api.portfolios import router as portfolios_router
 from app.api.profile import router as profile_router
 from app.api.contact import router as contact_router
 from app.api.documents import router as documents_router
+from app.api.admin import router as admin_router
+from app.core.admin_auth import ensure_seed_admin
 from app.core.config import settings
 from app.core.rate_limit import limiter
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Seed the first admin-panel credentials from env (no-op when set).
+    ensure_seed_admin()
+    yield
+
 
 app = FastAPI(
     title="ZEVQYN Backend",
     description="AI Research + Career Workspace API",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS — configurable via CORS_ORIGINS env var.
@@ -50,6 +63,7 @@ app.include_router(resumes_router)
 app.include_router(portfolios_router)
 app.include_router(profile_router)
 app.include_router(contact_router)
+app.include_router(admin_router)
 
 
 @app.get("/")

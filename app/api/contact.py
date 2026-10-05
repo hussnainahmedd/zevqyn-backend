@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, status
 
-from app.core.auth import AuthenticatedUser, require_admin_user
+from app.core.admin_auth import require_admin_combined
 from app.core.rate_limit import limiter
 from app.models.contact import (
     ContactMessageCreate,
@@ -37,11 +37,11 @@ async def submit_contact_message(
 
 
 # ==============================================================================
-# 2. ADMIN INBOX MANAGEMENT (REQUIRES APP_METADATA.ROLE == 'ADMIN')
+# 2. ADMIN INBOX MANAGEMENT (admin panel JWT or legacy app_metadata.role == 'admin')
 # ==============================================================================
 @router.get("/messages", response_model=list[ContactMessageResponse])
 async def list_contact_messages(
-    admin: AuthenticatedUser = Depends(require_admin_user),
+    admin: str = Depends(require_admin_combined),
 ):
     """List all contact inquiries (admin only)."""
     return contact_service.get_contact_messages()
@@ -50,7 +50,7 @@ async def list_contact_messages(
 @router.get("/messages/{message_id}", response_model=ContactMessageResponse)
 async def get_contact_message_detail(
     message_id: UUID,
-    admin: AuthenticatedUser = Depends(require_admin_user),
+    admin: str = Depends(require_admin_combined),
 ):
     """Retrieve details for a single contact inquiry (admin only)."""
     return contact_service.get_contact_message(message_id)
@@ -60,7 +60,7 @@ async def get_contact_message_detail(
 async def update_contact_message(
     message_id: UUID,
     update: ContactStatusUpdate,
-    admin: AuthenticatedUser = Depends(require_admin_user),
+    admin: str = Depends(require_admin_combined),
 ):
     """Update review status of a contact inquiry (admin only)."""
     return contact_service.update_contact_message_status(message_id, update)

@@ -51,6 +51,15 @@ class Settings:
     RAG_MAX_CONTEXT_CHARS: int = int(os.getenv("RAG_MAX_CONTEXT_CHARS", "20000"))
     GEMINI_GENERATION_MODEL: str = os.getenv("GEMINI_GENERATION_MODEL", "gemini-2.5-flash")
 
+    # Admin panel — dedicated credential login for /api/v1/admin/*.
+    # ADMIN_ID / ADMIN_PASSWORD seed the first admin row on startup (only
+    # when the admin_users table is empty); the password can be changed
+    # later from the admin UI. ADMIN_JWT_SECRET signs admin session tokens
+    # and MUST be set to a long random value in production.
+    ADMIN_ID: str = os.getenv("ADMIN_ID", "")
+    ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "")
+    ADMIN_JWT_SECRET: str = os.getenv("ADMIN_JWT_SECRET", "")
+
     @property
     def max_upload_bytes(self) -> int:
         """Maximum upload size in bytes."""
