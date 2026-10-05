@@ -122,6 +122,8 @@ def create_resume_item(user_id: UUID, resume_id: UUID, item: ResumeItemCreate) -
         source_id_str = str(item.source_id)
     elif item.title:
         title = item.title.strip()
+        subtitle = (item.subtitle or "").strip()
+        description = (item.description or "").strip()
     else:
         raise HTTPException(status_code=400, detail="Provide a source record or a custom title")
 
@@ -549,7 +551,30 @@ def export_resume_pdf(user_id: UUID, resume_id: UUID) -> Response:
         sections.setdefault(item.section_type, []).append(item)
 
     # --------------------------------------------------------------------------
-    # 3. EDUCATION
+    # 3. EXPERIENCE
+    # --------------------------------------------------------------------------
+    if "experience" in sections and sections["experience"]:
+        _render_section_heading(pdf, "EXPERIENCE")
+        for item in sections["experience"]:
+            exp_title = _clean_text(getattr(item, "title", "") or "")
+            exp_sub = _clean_text(getattr(item, "subtitle", "") or "")
+            exp_desc = _clean_text(getattr(item, "description", "") or "")
+
+            if pdf.h - pdf.b_margin - pdf.get_y() < 18:
+                pdf.add_page()
+
+            pdf.set_font("helvetica", "B", 10.5)
+            pdf.multi_cell(0, 5, exp_title, new_x="LMARGIN", new_y="NEXT")
+            if exp_sub:
+                pdf.set_font("helvetica", "I", 10)
+                pdf.multi_cell(0, 4.5, exp_sub, new_x="LMARGIN", new_y="NEXT")
+            if exp_desc:
+                pdf.set_font("helvetica", "", 9.5)
+                pdf.multi_cell(0, 4.2, exp_desc, new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(2.5)
+
+    # --------------------------------------------------------------------------
+    # 4. EDUCATION
     # --------------------------------------------------------------------------
     if "education" in sections and sections["education"]:
         _render_section_heading(pdf, "EDUCATION")

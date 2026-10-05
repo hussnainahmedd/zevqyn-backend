@@ -70,12 +70,15 @@ class ResumeItemCreate(BaseModel):
     """Attach an item to a resume.
 
     Either link an existing record via ``source_id`` (title/subtitle/desc are
-    resolved server-side) or provide a free-text ``title`` for a custom item.
+    resolved server-side) or provide a free-text ``title`` for a custom item
+    (with optional ``subtitle``/``description``).
     """
     model_config = ConfigDict(extra="forbid")
-    section_type: str = Field(..., pattern="^(project|skill|education|certificate)$")
+    section_type: str = Field(..., pattern="^(experience|project|skill|education|certificate)$")
     source_id: Optional[UUID] = None
     title: Optional[str] = Field(None, min_length=1, max_length=200)
+    subtitle: Optional[str] = Field(None, max_length=200)
+    description: Optional[str] = Field(None, max_length=2000)
     sort_order: Optional[int] = Field(0)
 
 
