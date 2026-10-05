@@ -1,0 +1,3 @@
+{
+  "tests/test_rag_advanced.py::test_empty_message_rejection": true
+}
