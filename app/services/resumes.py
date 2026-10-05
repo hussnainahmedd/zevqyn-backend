@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import re
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID
 from fastapi import HTTPException, status
 from fastapi.responses import Response
@@ -82,55 +82,64 @@ def delete_resume(user_id: UUID, resume_id: UUID) -> dict:
 def create_resume_item(user_id: UUID, resume_id: UUID, item: ResumeItemCreate) -> ResumeItemResponse:
     # 1. Verify resume ownership
     get_resume(user_id, resume_id)
-    
-    # 2. Resolve source item and verify ownership
+
+    # 2. Resolve content: linked record via source_id, or free-text custom item
     title = ""
     subtitle = ""
     description = ""
-    
-    try:
-        if item.section_type == "project":
-            proj = get_project(user_id, item.source_id)
-            title = proj.title
-            subtitle = ", ".join(proj.technologies) if proj.technologies else ""
-            description = proj.short_description
-        elif item.section_type == "skill":
-            skill = get_skill(user_id, item.source_id)
-            title = skill.name
-            subtitle = skill.category
-            description = f"Proficiency: {skill.proficiency}/5"
-        elif item.section_type == "education":
-            edu = get_education(user_id, item.source_id)
-            title = edu.institution
-            subtitle = f"{edu.degree} in {edu.field_of_study}"
-            description = f"{edu.start_date} - {edu.end_date if edu.end_date else 'Present'}"
-            if edu.description:
-                description += f" | {edu.description}"
-        elif item.section_type == "certificate":
-            cert = get_certificate(user_id, item.source_id)
-            title = cert.title
-            subtitle = cert.issuer
-            description = f"Issued: {cert.issue_date}"
-            if cert.credential_id:
-                description += f" | ID: {cert.credential_id}"
-    except HTTPException:
-        # Re-raise ownership errors
-        raise HTTPException(status_code=403, detail="Not authorized to attach this record")
+    source_id_str: Optional[str] = None
+
+    if item.source_id is not None:
+        # Resolve source item and verify ownership
+        try:
+            if item.section_type == "project":
+                proj = get_project(user_id, item.source_id)
+                title = proj.title
+                subtitle = ", ".join(proj.technologies) if proj.technologies else ""
+                description = proj.short_description
+            elif item.section_type == "skill":
+                skill = get_skill(user_id, item.source_id)
+                title = skill.name
+                subtitle = skill.category
+                description = f"Proficiency: {skill.proficiency}/5"
+            elif item.section_type == "education":
+                edu = get_education(user_id, item.source_id)
+                title = edu.institution
+                subtitle = f"{edu.degree} in {edu.field_of_study}" if edu.field_of_study else edu.degree
+                description = f"{edu.start_date or ''} - {edu.end_date if edu.end_date else 'Present'}".strip(" -")
+                if edu.description:
+                    description += f" | {edu.description}"
+            elif item.section_type == "certificate":
+                cert = get_certificate(user_id, item.source_id)
+                title = cert.title
+                subtitle = cert.issuer
+                description = f"Issued: {cert.issue_date}" if cert.issue_date else ""
+                if cert.credential_id:
+                    description += f" | ID: {cert.credential_id}"
+        except HTTPException:
+            # Re-raise ownership errors
+            raise HTTPException(status_code=403, detail="Not authorized to attach this record")
+        source_id_str = str(item.source_id)
+    elif item.title:
+        title = item.title.strip()
+    else:
+        raise HTTPException(status_code=400, detail="Provide a source record or a custom title")
 
     client = get_admin_client()
-    
-    # Check for duplicates safely
-    res = client.table("resume_items").select("*").eq("resume_id", str(resume_id)).eq("metadata->>source_id", str(item.source_id)).execute()
-    if res.data:
-        raise HTTPException(status_code=400, detail="Item already attached to resume")
-    
+
+    # Check for duplicates safely (linked records only)
+    if source_id_str is not None:
+        res = client.table("resume_items").select("*").eq("resume_id", str(resume_id)).eq("metadata->>source_id", source_id_str).execute()
+        if res.data:
+            raise HTTPException(status_code=400, detail="Item already attached to resume")
+
     insert_data = {
         "resume_id": str(resume_id),
         "section_type": item.section_type,
         "title": title,
         "subtitle": subtitle,
         "description": description,
-        "metadata": {"source_id": str(item.source_id), "source_type": item.section_type},
+        "metadata": {"source_id": source_id_str, "source_type": item.section_type},
         "sort_order": item.sort_order
     }
     

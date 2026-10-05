@@ -67,10 +67,15 @@ class ResumeResponse(BaseModel):
 # RESUME ITEMS
 # ==============================================================================
 class ResumeItemCreate(BaseModel):
-    """Client provides the trusted source_id. We fetch title/subtitle/desc securely."""
+    """Attach an item to a resume.
+
+    Either link an existing record via ``source_id`` (title/subtitle/desc are
+    resolved server-side) or provide a free-text ``title`` for a custom item.
+    """
     model_config = ConfigDict(extra="forbid")
     section_type: str = Field(..., pattern="^(project|skill|education|certificate)$")
-    source_id: UUID
+    source_id: Optional[UUID] = None
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
     sort_order: Optional[int] = Field(0)
 
 

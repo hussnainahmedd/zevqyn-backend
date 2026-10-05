@@ -13,8 +13,8 @@ from pydantic import BaseModel, Field, ConfigDict
 class SkillCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(..., min_length=1, max_length=100)
-    category: str = Field(..., max_length=50)
-    proficiency: int = Field(..., ge=1, le=5)
+    category: str = Field("general", max_length=50)
+    proficiency: int = Field(3, ge=1, le=5)
 
 class SkillUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -36,8 +36,8 @@ class EducationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     institution: str = Field(..., min_length=1, max_length=200)
     degree: str = Field(..., min_length=1, max_length=200)
-    field_of_study: str = Field(..., min_length=1, max_length=200)
-    start_date: date
+    field_of_study: str = Field("", max_length=200)
+    start_date: Optional[date] = None
     end_date: Optional[date] = None
     description: Optional[str] = Field(None, max_length=2000)
 
@@ -68,7 +68,7 @@ class CertificateCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(..., min_length=1, max_length=200)
     issuer: str = Field(..., min_length=1, max_length=200)
-    issue_date: date
+    issue_date: Optional[date] = None
     expiry_date: Optional[date] = None
     credential_id: Optional[str] = Field(None, max_length=200)
     credential_url: Optional[str] = Field(None, max_length=500)
