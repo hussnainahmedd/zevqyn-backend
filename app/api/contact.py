@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
 from app.core.auth import AuthenticatedUser, require_admin_user
+from app.core.rate_limit import limiter
 from app.models.contact import (
     ContactMessageCreate,
     ContactMessageResponse,
@@ -22,12 +23,15 @@ router = APIRouter(prefix="/api/v1/contact", tags=["contact"])
 # 1. PUBLIC CONTACT SUBMISSION
 # ==============================================================================
 @router.post("", response_model=ContactSubmitResponse, status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
 async def submit_contact_message(
+    request: Request,
     data: ContactMessageCreate,
 ):
     """Public endpoint for submitting marketing website contact messages.
 
-    Does NOT require authentication or access tokens.
+    Does NOT require authentication or access tokens. Rate-limited per IP
+    to prevent spam/abuse.
     """
     return contact_service.create_contact_message(data)
 
