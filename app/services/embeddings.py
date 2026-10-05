@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import HTTPException, status
 from google import genai
 from google.genai import types
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.core.config import settings
 
@@ -27,6 +28,25 @@ def get_gemini_client() -> genai.Client:
     return _gemini_client
 
 
+def _call_embed_api(client: genai.Client, texts: list[str], config: types.EmbedContentConfig):
+    """Single embedding API call, retried on transient failures."""
+    return client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=texts,
+        config=config
+    )
+
+
+# Retry transient API failures (rate limits, 5xx, network blips) with
+# exponential backoff: ~2s, ~4s, ~8s between attempts, max 4 tries.
+_embed_with_retry = retry(
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=2, min=2, max=10),
+    retry=retry_if_exception_type(Exception),
+    reraise=True,
+)(_call_embed_api)
+
+
 def _embed_content(texts: list[str], task_type: str) -> list[list[float]]:
     """Internal helper to call Gemini embedding API."""
     if not texts:
@@ -40,15 +60,11 @@ def _embed_content(texts: list[str], task_type: str) -> list[list[float]]:
     )
     
     try:
-        response = client.models.embed_content(
-            model="gemini-embedding-001",
-            contents=texts,
-            config=config
-        )
+        response = _embed_with_retry(client, texts, config)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Embedding API failed: {type(e).__name__}: {str(e)[:300]}"
+            detail=f"Embedding API failed after retries: {type(e).__name__}: {str(e)[:300]}"
         )
         
     # Validation
