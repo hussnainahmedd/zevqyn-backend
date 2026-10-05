@@ -89,11 +89,11 @@ def index_document(user_id: UUID, workspace_id: UUID, document_id: UUID) -> Inde
             if not res.data:
                 raise Exception("Insert returned no data")
                 
-    except Exception:
+    except Exception as e:
         client.table("documents").update({"status": "failed"}).eq("id", str(document_id)).execute()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to persist indexed chunks to database"
+            detail=f"Failed to persist indexed chunks: {type(e).__name__}: {str(e)[:300]}"
         )
         
     # Success

@@ -48,7 +48,7 @@ def _embed_content(texts: list[str], task_type: str) -> list[list[float]]:
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to generate embeddings via Gemini API"
+            detail=f"Embedding API failed: {type(e).__name__}: {str(e)[:300]}"
         )
         
     # Validation
